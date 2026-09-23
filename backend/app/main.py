@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from .ai import AIUnavailable, configured, respond
 from .graph import Graph
 from .models import AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User
 
@@ -111,6 +112,31 @@ class EventIn(BaseModel):
     kind: str
     location: str | None = None
     starts_at: datetime | None = None
+
+
+class AgentRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    api_key: str | None = Field(default=None, max_length=512)
+
+
+class AgentChatRequest(BaseModel):
+    api_key: str | None = Field(default=None, max_length=512)
+
+
+@app.get("/agent/status")
+def agent_status():
+    return {"server_ai_configured": configured(), "bring_your_own_key": True}
+
+
+@app.post("/agent/reply")
+def agent_reply(data: AgentRequest, u: User = Depends(actor)):
+    system = ("You are the member's friendly Aeolia social companion. Help them clarify friendship "
+              "preferences without claiming to be the member. Never reveal their private notes to another person. "
+              "Keep your reply concise. Their private preferences: " + u.preference_note[:700])
+    try:
+        return {"reply": respond(system, data.message, data.api_key)}
+    except AIUnavailable as error:
+        raise HTTPException(503, str(error)) from error
 
 
 def user_view(u):
@@ -331,7 +357,7 @@ def encounter_detail(encounter_id: int, db: Session = Depends(get_db), u: User =
 
 
 @app.post("/encounters/{encounter_id}/agent-chat")
-def agent_chat(encounter_id: int, db: Session = Depends(get_db), u: User = Depends(actor)):
+def agent_chat(encounter_id: int, data: AgentChatRequest, db: Session = Depends(get_db), u: User = Depends(actor)):
     e = db.get(Encounter, encounter_id)
     if not e or u.id not in (e.owner_id, e.candidate_id):
         raise HTTPException(404, "Encounter not found")
@@ -340,9 +366,24 @@ def agent_chat(encounter_id: int, db: Session = Depends(get_db), u: User = Depen
         raise HTTPException(403, "Both people must opt in to agent chat")
     if db.scalar(select(AgentTurn.id).where(AgentTurn.encounter_id == e.id)):
         return encounter_detail(encounter_id, db, u)
-    # Explicit deterministic demo transcript: replace with a moderated LLM worker in production.
     topic = next(iter(set(a.interests.split(",")) & set(b.interests.split(","))), "this circle")
-    db.add_all([AgentTurn(encounter_id=e.id, speaker_id=a.id, body=f"My person likes {topic}. Is that something your person enjoys too?"), AgentTurn(encounter_id=e.id, speaker_id=b.id, body=f"Yes, {topic} sounds like a good place to start a conversation.")])
+    public_posts = [p.body[:180] for p in db.scalars(select(Post).where(Post.author_id == b.id, Post.visibility == "public").limit(2))]
+    # Only explicitly shareable interests and currently public posts enter the cross-agent prompt.
+    context = f"Circle: {db.get(Circle, e.circle_id).name}. Shared topic: {topic}. Public posts: {public_posts}."
+    try:
+        first = respond(
+            "You are one member's social agent introducing two strangers. Write one short, friendly question. "
+            "Mention only the provided public context. Do not invent private facts.",
+            context, data.api_key,
+        )
+        second = respond(
+            "You are the other member's social agent. Reply briefly to the introduction using only the "
+            "provided public context. Never impersonate the real person or promise a meeting.",
+            f"Context: {context} First agent said: {first}", data.api_key,
+        )
+    except AIUnavailable as error:
+        raise HTTPException(503, str(error)) from error
+    db.add_all([AgentTurn(encounter_id=e.id, speaker_id=a.id, body=first), AgentTurn(encounter_id=e.id, speaker_id=b.id, body=second)])
     e.status = "agent_chatted"
     db.commit()
     return encounter_detail(encounter_id, db, u)

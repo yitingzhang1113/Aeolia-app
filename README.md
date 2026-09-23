@@ -1,10 +1,17 @@
-# Aeolia
+<div align="center">
+  <img src="mobile/assets/logo.png" alt="Aeolia planet logo" width="144" />
+  <h1>Aeolia</h1>
+  <p><strong>Meet real people through unexpected, explainable connections.</strong></p>
+  <p>Circles · Agent avatars · Graph discovery · Human connections</p>
+</div>
+
+---
 
 **An agent-assisted social app for meeting real people through circles and unexpected encounters.**
 
 Aeolia combines a real profile with a customizable agent avatar. Members follow public circles, publish posts, and choose where their agent may explore. The agent suggests people through a social graph and presents an explanation, eligible public post evidence, and an inspectable conversation when both people permit agent chat. The people decide whether to follow, message, or join an event.
 
-> **Status: development prototype.** The app and API run locally with seeded accounts. Agent dialogue is deterministic sample text. Billing, production authentication, real-time media, and deployed AI inference are not implemented. This repository is not ready for public users.
+> **Status: development prototype.** The app and API run locally with seeded accounts. Live agent replies require a configured compatible model provider or a temporary user-provided key. Billing, production authentication, real-time media, and production-grade AI safety are not implemented. This repository is not ready for public users.
 
 ## Product principles
 
@@ -22,7 +29,7 @@ Aeolia combines a real profile with a customizable agent avatar. Members follow 
 | Profiles | Seeded people and basic avatar outfit color | Profile editing, photo storage, animated avatars |
 | Circles and posts | Follow/explore switches; public circle and friends-only text posts | Pagination, moderation, media upload |
 | Discovery | Neo4j relationships and bounded randomized candidate traversal | Background sync and load testing |
-| Agent chat | Mutual consent check and readable example transcript | Moderated model worker and revocation |
+| Agent chat | Real compatible-model calls, mutual consent check, readable transcript | Moderation, queue, revocation, cost controls |
 | Messages/events | Persisted basic text messages and event records | Groups, games, invitations, calls |
 | Subscription | UI placeholder | Billing and server-side entitlements |
 
@@ -33,6 +40,7 @@ Aeolia-app/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py       # API, permissions, discovery
+│   │   ├── ai.py         # Compatible model provider adapter
 │   │   ├── models.py     # Relational data model
 │   │   └── graph.py      # Neo4j projection and traversal
 │   ├── tests/
@@ -56,6 +64,22 @@ flowchart TB
 ```
 
 PostgreSQL holds accounts, visibility choices, posts, follows, messages, events, encounters, and agent turns. Neo4j projects people, circles, shareable topics, and their relationships for exploration. Private agent preference notes stay in the relational database and are not copied verbatim into Neo4j. The API rechecks blocks, discoverability, and public post visibility against the source of truth before showing recommendations. A durable synchronization mechanism and reconciliation job are required before production.
+
+### AI connection and MCP
+
+The backend calls an operator-configured **OpenAI-compatible Chat Completions API**. Set `AEOLIA_AI_API_KEY` for a shared development configuration, or enter a personal provider key in the app's Settings for the current session. Personal keys are passed with agent requests and are not stored in the database or written to the repository. Both agent replies and consented agent introductions use this adapter. Without a key, they return a clear service error; the app does not silently fabricate a transcript.
+
+**MCP is for connecting an agent to tools and data sources, not a universal way to connect an arbitrary model account.** A future Aeolia MCP server could expose scoped tools such as `search_circle`, `read_public_post`, and `request_introduction`. The app would still need a model provider and an authenticated MCP client; tools must enforce the user's consent and visibility on every call. Do not connect arbitrary user-supplied MCP URLs to this backend: remote tools need explicit approval, OAuth and network isolation.
+
+```mermaid
+flowchart LR
+    Member["Member & avatar"] --> API["Aeolia API"]
+    API --> Model["Compatible AI provider"]
+    API --> Graph["Neo4j discovery"]
+    API --> Data["PostgreSQL permissions"]
+    Model -. "future tool calls" .-> MCP["Scoped MCP server"]
+    MCP --> API
+```
 
 ## Local development
 
@@ -104,8 +128,22 @@ On a physical phone, set `EXPO_PUBLIC_API_URL=http://<your-computer-LAN-IP>:8000
 | `NEO4J_USER` | API | `neo4j` | Graph username |
 | `NEO4J_PASSWORD` | API | `aeolia_dev_password` | Local graph password |
 | `EXPO_PUBLIC_API_URL` | Mobile | `http://localhost:8000` | API address reachable from the device |
+| `AEOLIA_AI_API_KEY` | API | unset | Server-side provider key; needed unless a temporary personal key is sent |
+| `AEOLIA_AI_BASE_URL` | API | `https://api.openai.com/v1` | Operator-configured HTTPS compatible provider endpoint |
+| `AEOLIA_AI_MODEL` | API | `gpt-4.1-mini` | Provider model identifier |
+| `AEOLIA_ALLOW_LOCAL_AI` | API | unset | Set to `1` only to permit `http://localhost:...` for local model testing |
 
 Compose credentials are for local development only.
+
+Example for the official OpenAI endpoint:
+
+```bash
+export AEOLIA_AI_API_KEY="your-development-api-key"
+export AEOLIA_AI_MODEL="gpt-4.1-mini"
+# Restart uvicorn after changing server environment variables.
+```
+
+To use another compatible provider, set `AEOLIA_AI_BASE_URL` and `AEOLIA_AI_MODEL` on the **server**. Personal keys in the prototype's Settings are held in app memory and cleared when the app restarts; they do not change the provider URL. Do not share provider keys with other users. Public release needs authenticated accounts, encryption, provider allowlists, key custody rules, spend limits, logging redaction, and moderated background jobs.
 
 ## API overview
 
@@ -115,7 +153,8 @@ Compose credentials are for local development only.
 | People | `GET /users/{id}`, `GET /users/by-id/{handle}`, `POST /users/{id}/follow` | Profiles, ID lookup, following |
 | Circles | `GET /circles`, `PATCH /circles/{id}` | Circle follow and explore choices |
 | Posts | `GET /feed`, `GET /circles/{id}/posts`, `POST /posts`, `DELETE /posts/{id}` | Feed and text posts |
-| Discovery | `POST /explore/{circle_id}`, `GET /encounters`, `GET /encounters/{id}`, `POST /encounters/{id}/agent-chat` | Search, evidence, sample dialogue |
+| Discovery | `POST /explore/{circle_id}`, `GET /encounters`, `GET /encounters/{id}`, `POST /encounters/{id}/agent-chat` | Search, evidence, model-backed dialogue |
+| AI | `GET /agent/status`, `POST /agent/reply` | Configuration state and a model-backed private agent reply |
 | Messages/events | `GET /messages/{other_id}`, `POST /messages`, `GET/POST /events` | Basic chat and activities |
 
 See OpenAPI documentation for request schemas. Media URL and message kind fields do not imply an upload pipeline or voice/video delivery.
@@ -134,7 +173,7 @@ API tests use temporary SQLite. The Neo4j path needs a running local stack; auto
 
 ## Production requirements
 
-Before inviting external users, implement verified authentication, authorization, consent and privacy controls, blocking/reporting, moderation, deletion, schema migrations, secret management, background graph synchronization, observability, and abuse protection. Media processing, real-time communication, games, and paid entitlements require separate implementation and testing. Actual agent conversations need a moderated model worker, rate limits, and clear disclosure of accessible information.
+Before inviting external users, implement verified authentication, authorization, consent and privacy controls, blocking/reporting, moderation, deletion, schema migrations, secret management, background graph synchronization, observability, and abuse protection. Media processing, real-time communication, games, and paid entitlements require separate implementation and testing. Agent conversations need a moderated model worker, rate limits, key custody and cost controls, and clear disclosure of accessible information.
 
 Sponsored circle posts and Jev-based candidate scoring are product proposals, not shipped features. Future ads should be clearly labeled and excluded from person recommendations unless people explicitly consent.
 

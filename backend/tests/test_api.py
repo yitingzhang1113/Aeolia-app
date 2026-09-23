@@ -38,3 +38,18 @@ def test_exploration_requires_explicit_circle_consent():
     with TestClient(app) as client:
         client.patch("/circles/1", json={"explore":False})
         assert client.post("/explore/1").status_code == 403
+
+
+def test_agent_reply_uses_model_and_never_returns_private_note(monkeypatch):
+    from app import main
+    seen = {}
+    def fake_respond(system, message, key):
+        seen.update(system=system, message=message, key=key)
+        return "Let's start with a shared hobby."
+    monkeypatch.setattr(main, "respond", fake_respond)
+    with TestClient(app) as client:
+        reply = client.post("/agent/reply", json={"message": "Help me meet friends", "api_key": "temporary-key"})
+        assert reply.json() == {"reply": "Let's start with a shared hobby."}
+        assert seen["key"] == "temporary-key"
+        assert seen["message"] == "Help me meet friends"
+        assert "curious" in seen["system"]
