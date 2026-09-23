@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+.expo/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+*.db
+dist/
