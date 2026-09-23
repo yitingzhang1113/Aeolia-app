@@ -1,5 +1,5 @@
 import React from 'react';
-import {Text,View,TouchableOpacity,StyleSheet,TextInput} from 'react-native';
+import {Text,View,TouchableOpacity,StyleSheet,TextInput,Image} from 'react-native';
 import {colors as c} from './theme';
 
 export function Avatar({outfit='teal',size=52}:{outfit?:string;size?:number}){
@@ -11,6 +11,7 @@ export function Avatar({outfit='teal',size=52}:{outfit?:string;size?:number}){
     <View style={{width:size*.66,height:size*.34,borderTopLeftRadius:size*.25,borderTopRightRadius:size*.25,backgroundColor:jacket[outfit]||jacket.teal}}/>
   </View>;
 }
+export function Brand({compact=false}:{compact?:boolean}){return <View style={{flexDirection:'row',alignItems:'center',marginLeft:-5}}><Image source={require('../assets/logo.png')} style={{width:compact?43:60,height:compact?43:60}} resizeMode="contain"/><Text style={{color:c.ink,fontSize:compact?19:25,fontWeight:'700',marginLeft:compact?0:-3}}>Aeolia</Text></View>}
 export function Pill({label,onPress,active=false}:{label:string;onPress:()=>void;active?:boolean}){return <TouchableOpacity onPress={onPress} style={[styles.pill,active&&{backgroundColor:c.teal}]}><Text style={{color:active?c.white:c.ink,fontWeight:'600'}}>{label}</Text></TouchableOpacity>}
 export function Button({label,onPress,secondary=false}:{label:string;onPress:()=>void;secondary?:boolean}){return <TouchableOpacity onPress={onPress} style={[styles.button,secondary&&{backgroundColor:c.white,borderWidth:1,borderColor:c.teal}]}><Text style={{color:secondary?c.teal:c.white,fontWeight:'700',fontSize:15}}>{label}</Text></TouchableOpacity>}
 export function Section({title,action,children}:{title:string;action?:React.ReactNode;children:React.ReactNode}){return <View style={{marginBottom:22}}><View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><Text style={styles.heading}>{title}</Text>{action}</View>{children}</View>}
