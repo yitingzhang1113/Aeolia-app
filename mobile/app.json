@@ -1,1 +1,42 @@
-{"expo":{"name":"Aeolia","slug":"aeolia","scheme":"aeolia","version":"0.1.0","orientation":"portrait","userInterfaceStyle":"light","icon":"./assets/icon.png","splash":{"image":"./assets/logo.png","resizeMode":"contain","backgroundColor":"#FFF9F1"},"ios":{"supportsTablet":false},"android":{"adaptiveIcon":{"foregroundImage":"./assets/icon.png","backgroundColor":"#FFF9F1"}},"plugins":[]}}
+{
+  "expo": {
+    "name": "Aeolia",
+    "slug": "aeolia",
+    "scheme": "aeolia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FCFBF8"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFF9F1"
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos and videos to share on Aeolia.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "expo-video",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Use your location to find people nearby on Aeolia."
+        }
+      ]
+    ]
+  }
+}

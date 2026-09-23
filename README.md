@@ -161,6 +161,36 @@ See OpenAPI documentation for request schemas. Media URL and message kind fields
 
 ## Verification
 
+### Local AI and a simulated community
+
+The API loads `backend/.env` without overriding existing environment variables.
+For an installed Ollama model, copy `backend/.env.example` to `backend/.env`,
+set `AEOLIA_AI_MODEL` to a name shown by `ollama list`, then start `ollama serve`
+and restart the API. The example uses `http://localhost:11434/v1` and
+`qwen2.5:7b`. No provider key is needed for explicitly enabled loopback
+AI endpoints. Local model requests allow 120 seconds for cold starts.
+
+With Neo4j and the API running against the same local database:
+
+```bash
+cd backend
+.venv/bin/python -m scripts.simulate_agents
+```
+
+This adds 20 fictional members with `sim.*` handles and labeled public posts,
+preserves the original accounts, and synchronizes the graph. Each simulated member
+attempts a real four-turn conversation between separately prompted member agents.
+The owner's agent then screens the transcript and cites a message from each agent.
+Only accepted screenings appear in For You; a user may receive no recommendation.
+The current demo account also explores so its accepted transcript is visible in the app.
+Existing screenings are reused on subsequent runs; `--refresh` archives them and starts a new run. Use `--seed-only` to populate
+the community without model calls. This is a finite simulation, not a background
+autonomous conversation service. Model output remains prototype quality.
+
+Keep Expo running while using the development app: its image assets are served
+by Metro. If images disappeared while Metro was stopped, restart `npm start` and
+reload Expo Go.
+
 ```bash
 cd backend
 python -m pytest -q tests
@@ -170,6 +200,33 @@ npm run typecheck
 ```
 
 API tests use temporary SQLite. The Neo4j path needs a running local stack; automated graph integration and mobile interaction tests remain future work.
+
+## Profile, discovery and avatar flows
+
+- **For You:** a compact row of agent avatars and names. Opening one reveals the
+  person's card, the full agent conversation, the screening reason and quoted evidence.
+- **Match choices:** interested and passed choices are persisted. A match request
+  does not create a friendship. Mutual interest establishes the connection and enables chat.
+- **Near me:** a city or foreground device location plus a 10/25/50/100 km radius.
+  Distance is calculated from coordinates, independently of interest circles. Coordinates
+  are rounded to two decimal places and excluded from other members' profile responses.
+  Existing SQLite encounter records are backed up before allowing location-only encounters.
+- **Profiles:** editable age, height, intent, what someone is looking for, interests,
+  work, education, languages, lifestyle, question prompts, music artists/genres and a
+  music profile or playlist link. Music links do not imply an OAuth account connection.
+  Minimum-height preferences stay private and are enforced before model screening.
+- **Photo/video posts:** ordered photo selection, caption/audience, video covers,
+  local upload storage and visibility-checked playback.
+- **Change outfit:** a photo-to-agent workflow using the fixed prompt in
+  `backend/app/avatar_prompt.txt` and the existing outfit artwork as a style reference.
+  Generated avatars appear across profile and recommendation cards; source photos stay private.
+
+The avatar adapter currently supports an **Images Edit-compatible** local service.
+No image endpoint is configured by default and it never silently falls back to a cloud provider.
+Set `AEOLIA_IMAGE_BASE_URL`, `AEOLIA_IMAGE_MODEL` and `AEOLIA_ALLOW_LOCAL_IMAGES=1`
+for a loopback service implementing multipart `POST /images/edits` with a base64 PNG
+response. Native ComfyUI/WebUI workflows require an adapter for the supplied workflow;
+that connection is still pending. Chat-only Ollama models cannot generate avatar images.
 
 ## Production requirements
 

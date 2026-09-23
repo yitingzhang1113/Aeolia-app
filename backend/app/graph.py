@@ -29,6 +29,7 @@ class Graph:
             id=user.id, handle=user.handle, discoverable=user.agent_discoverable,
         )
         # Only explicitly supplied shareable interest tags enter the graph; private agent notes stay in Postgres.
+        self.driver.execute_query("MATCH (p:Person {id:$id})-[r:LIKES]->() DELETE r", id=user.id)
         for tag in [x.strip().lower() for x in user.interests.split(",") if x.strip()]:
             self.driver.execute_query(
                 "MATCH (p:Person {id:$id}) MERGE (t:Topic {name:$tag}) MERGE (p)-[:LIKES]->(t)",
