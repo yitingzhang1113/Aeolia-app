@@ -4,10 +4,12 @@ import json
 from .ai import AIUnavailable
 
 
-def discuss_and_assess(owner, candidate, circle, generate, key=None, preferences=""):
+def discuss_and_assess(owner, candidate, circle, generate, key=None, preferences="", max_turns=8):
     profiles = [owner, candidate]
     turns = []
-    for index in range(4):
+    # Keep conversations deliberately short; the member controls this budget.
+    turn_count = max(2, min(int(max_turns), 30))
+    for index in range(turn_count):
         speaker = profiles[index % 2]
         other = profiles[(index + 1) % 2]
         instruction = (
@@ -46,7 +48,7 @@ def discuss_and_assess(owner, candidate, circle, generate, key=None, preferences
             if (type(assessment["recommend"]) is not bool
                     or not isinstance(assessment["reason"], str) or not assessment["reason"].strip()
                     or not isinstance(refs, list) or len(refs) != 2
-                    or any(type(i) is not int or not 1 <= i <= 4 for i in refs)
+                    or any(type(i) is not int or not 1 <= i <= len(turns) for i in refs)
                     or refs[0] % 2 == refs[1] % 2):
                 raise ValueError("Invalid assessment")
             return turns, {"recommend": assessment["recommend"], "reason": assessment["reason"].strip(),
