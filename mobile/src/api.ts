@@ -124,3 +124,29 @@ export type DiscoveryPolicy = {
   max_tokens_per_person: number;
   show_near_matches: boolean;
 };
+
+export type AuthProviders = {
+  google: { enabled: boolean; label: string };
+  chatgpt: { enabled: boolean; label: string; limited_trial: boolean };
+  email: { enabled: boolean; label: string };
+};
+
+export type OnboardingDraft = {
+  display_name: string;
+  age: number | null;
+  height_cm?: number | null;
+  ethnicity?: string;
+  city: string;
+  school: string;
+  education_level: string;
+  field_of_study: string;
+  job: string;
+  company: string;
+  bio: string;
+  interests: string[];
+  languages: string[];
+  lifestyle: string[];
+  intents: ("friendship" | "dating" | "networking" | "activities")[];
+  looking_for: string;
+  photo_ids: string[];
+};
