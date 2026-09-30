@@ -60,6 +60,19 @@ class SocialProfile(Base):
     required_city: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
+class DiscoveryPolicy(Base):
+    """Private member-owned discovery rules. Never expose this object to another member or agent."""
+    __tablename__ = "discovery_policies"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # JSON document keyed by relationship intent (friendship/dating).
+    rules: Mapped[str] = mapped_column(Text, default="{}")
+    # Personal-AI exploration budget. These are ceilings, not entitlements.
+    people_per_week: Mapped[int] = mapped_column(Integer, default=5)
+    max_turns_per_person: Mapped[int] = mapped_column(Integer, default=8)
+    max_tokens_per_person: Mapped[int] = mapped_column(Integer, default=2500)
+    show_near_matches: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class UserLocation(Base):
     __tablename__ = "user_locations"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
