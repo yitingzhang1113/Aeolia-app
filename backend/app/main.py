@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .ai import AIUnavailable, configured, respond
+from .auth import router as auth_router
 from .avatar import register_avatar
 from .discovery import discuss_and_assess
 from .location import distance_km
@@ -95,6 +96,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aeolia API", lifespan=lifespan)
+app.include_router(auth_router)
 app.include_router(personal_ai_router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
