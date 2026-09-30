@@ -13,6 +13,34 @@ Aeolia combines a real profile with a customizable agent avatar. Members follow 
 
 > **Status: development prototype.** The app and API run locally with seeded accounts. Live agent replies require a configured compatible model provider or a temporary user-provided key. Billing, production authentication, real-time media, and production-grade AI safety are not implemented. This repository is not ready for public users.
 
+## Product direction: personal AI, human connection
+
+Aeolia is **social-first**. Dating is one possible relationship intent; the broader goal is to help a member discover people they would genuinely want to know without spending hours swiping.
+
+The product separates responsibilities deliberately:
+
+1. **Aeolia retrieves and ranks.** Private member-defined hard rules run first, followed by inexpensive compatibility signals/reranking. A member may prefer zero recommendations to irrelevant inventory.
+2. **The member's Elf explores.** A connected personal AI can spend a member-controlled budget talking to a small number of eligible Elves. Conversation length and people-per-week are bounded.
+3. **Humans inspect.** A recommendation can show the real profile card, real profile photos and the inspectable Elf transcript. Real profile photos are never part of the Elf context.
+4. **Humans connect.** An Elf can search, screen, converse and summarize, but it cannot create a human connection. Mutual human choice is required before person-to-person messaging.
+5. **Social interaction continues after discovery.** Friendship, dating, circles, events, group chat and lightweight games are relationship surfaces rather than a swipe loop.
+
+### Privacy boundaries
+
+- Real profile photos/media are human-facing assets. They are not supplied to discovery agents, rerank prompts or Elf-to-Elf conversations.
+- Private discovery rules are owner-only. They are never disclosed to another member or used as a rejection explanation.
+- Optional ethnicity is self-declared structured profile data only; Aeolia must never infer it from a photo, name or proxy.
+- Personal AI context is not copied wholesale into Aeolia. A future connector should expose only member-authorized preference/agent outputs.
+- Agent communication must pass through Aeolia's policy boundary. Personal contact information and other non-authorized private data must not be disclosed.
+- Avatar generation uses a fixed Aeolia style contract. A personal AI may supply authorized personalization, while an optional source portrait remains separate from discovery data.
+
+### Private preference strengths
+
+- **HARD:** candidate is ineligible before any model/token spend.
+- **STRONG:** candidate remains eligible but receives substantial ranking weight.
+- **SOFT:** personalization/tie-breaking signal.
+- When no candidate satisfies hard rules, the default is to show nobody; near matches require explicit opt-in.
+
 ## Product principles
 
 - **User control:** Following a circle and allowing agent exploration are separate choices. Agent-to-agent chat requires permission from both accounts.
