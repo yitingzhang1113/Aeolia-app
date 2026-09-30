@@ -7,6 +7,7 @@ export type Person = {
   profile?: {
     looking_for?: string;
     school?: string;
+    ethnicity?: string;
     languages?: string[];
     lifestyle?: string[];
     music_artists?: string[];
@@ -106,3 +107,20 @@ export const mediaSource = (uri: string) =>
     ? { uri: BASE + uri, headers: { "X-User-Id": "1" } }
     : { uri };
 export const mediaUploadURL = BASE + "/media";
+
+
+export type PreferenceRule = {
+  field: "age" | "height_cm" | "city" | "intent" | "school" | "job" | "ethnicity" | "languages" | "interests" | "lifestyle";
+  op: "eq" | "in" | "contains_any" | "contains_all" | "gte" | "lte";
+  value: unknown;
+  strength: "hard" | "strong" | "soft";
+  label?: string;
+};
+export type DiscoveryPolicy = {
+  friendship: { enabled: boolean; rules: PreferenceRule[] };
+  dating: { enabled: boolean; rules: PreferenceRule[] };
+  people_per_week: number;
+  max_turns_per_person: number;
+  max_tokens_per_person: number;
+  show_near_matches: boolean;
+};
