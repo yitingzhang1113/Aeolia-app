@@ -95,6 +95,15 @@ PostgreSQL holds accounts, visibility choices, posts, follows, messages, events,
 
 ### AI connection and MCP
 
+### Personal ChatGPT connection
+
+Aeolia's target UX has two complementary connections:
+
+- **Continue with ChatGPT:** use OpenAI's supported Sign in with ChatGPT flow when Aeolia has issued client credentials. Eligible integrations may request ChatGPT plan usage so the member can use their own allowance rather than an Aeolia-owned API key. This connection does **not** grant Aeolia access to the member's ChatGPT conversation history.
+- **Aeolia in ChatGPT:** expose a narrow authenticated MCP server so the member can ask their own ChatGPT to read daily discoveries, inspect Elf transcripts, request bounded Elf exploration and update their own discovery policy. Private tools require OAuth and member-scoped authorization.
+
+The MCP contract intentionally has **no profile-photo tool and no Connect tool**. Real photos stay in the Aeolia human UI; Connect remains a mutual human action. A future production MCP server should expose only the contracts in `backend/app/mcp_contract.py` and validate OAuth scopes on every call.
+
 The backend calls an operator-configured **OpenAI-compatible Chat Completions API**. Set `AEOLIA_AI_API_KEY` for a shared development configuration, or enter a personal provider key in the app's Settings for the current session. Personal keys are passed with agent requests and are not stored in the database or written to the repository. Both agent replies and consented agent introductions use this adapter. Without a key, they return a clear service error; the app does not silently fabricate a transcript.
 
 **MCP is for connecting an agent to tools and data sources, not a universal way to connect an arbitrary model account.** A future Aeolia MCP server could expose scoped tools such as `search_circle`, `read_public_post`, and `request_introduction`. The app would still need a model provider and an authenticated MCP client; tools must enforce the user's consent and visibility on every call. Do not connect arbitrary user-supplied MCP URLs to this backend: remote tools need explicit approval, OAuth and network isolation.
