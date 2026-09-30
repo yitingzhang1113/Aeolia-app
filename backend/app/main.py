@@ -445,8 +445,16 @@ def screen_encounter(db, encounter, key=None):
     if encounter.id is not None and db.get(AgentAssessment, encounter.id):
         return
     try:
-        turns, decision = discuss_and_assess(public_agent_profile(db, a), public_agent_profile(db, b),
-                                            db.get(Circle, encounter.circle_id).name if encounter.circle_id else "Nearby people", respond, key, a.preference_note)
+        policy = db.get(DiscoveryPolicy, a.id)
+        turns, decision = discuss_and_assess(
+            public_agent_profile(db, a),
+            public_agent_profile(db, b),
+            db.get(Circle, encounter.circle_id).name if encounter.circle_id else "Nearby people",
+            respond,
+            key,
+            a.preference_note,
+            policy.max_turns_per_person if policy else 8,
+        )
     except AIUnavailable as error:
         raise HTTPException(503, str(error)) from error
     # Recheck consent after model calls, before storing a recommendation.
