@@ -29,6 +29,28 @@ class User(Base):
     avatar: Mapped["AgentAvatar | None"] = relationship(uselist=False)
 
 
+class ExternalIdentity(Base):
+    """Verified sign-in identity. Provider tokens are never stored in this table."""
+    __tablename__ = "external_identities"
+    __table_args__ = (UniqueConstraint("provider", "issuer", "subject"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(20))
+    issuer: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class AgentAvatar(Base):
     __tablename__ = "agent_avatars"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
