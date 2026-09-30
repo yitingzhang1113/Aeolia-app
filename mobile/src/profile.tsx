@@ -94,6 +94,7 @@ export function ProfileEditor({
   const [bio, setBio] = useState(person.bio);
   const [job, setJob] = useState(person.job);
   const [school, setSchool] = useState(p.school || "");
+  const [ethnicity, setEthnicity] = useState(p.ethnicity || "");
   const [interests, setInterests] = useState(person.interests.join(", "));
   const [languages, setLanguages] = useState(p.languages?.join(", ") || "");
   const [lifestyle, setLifestyle] = useState(p.lifestyle?.join(", ") || "");
@@ -157,6 +158,7 @@ export function ProfileEditor({
           bio,
           job,
           school,
+          ethnicity: ethnicity.trim(),
           interests: tags(interests),
           languages: tags(languages),
           lifestyle: tags(lifestyle),
@@ -214,6 +216,8 @@ export function ProfileEditor({
             "School or field of study",
             100,
           )}
+          {field("Ethnicity · optional", ethnicity, setEthnicity, "Self-described only", 80)}
+          <Text style={styles.muted}>Optional and self-declared. Aeolia never infers ethnicity from your photos or name.</Text>
         </Section>
         <Section title="What brings you here?">
           <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
