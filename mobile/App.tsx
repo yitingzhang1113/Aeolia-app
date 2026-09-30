@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -38,7 +39,30 @@ import { colors as c } from "./src/theme";
 import { AvatarCreator } from "./src/avatar";
 import { ProfileEditor, ProfileExtras } from "./src/profile";
 import { LocationSettings } from "./src/location";
-import { MediaCarousel, MediaComposer, VideoPreview } from "./src/media";
+import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
+import {
+  MediaCarousel,
+  MediaComposer,
+  VideoPreview,
+  uploadMedia,
+} from "./src/media";
+import {
+  ChatImageBubble,
+  FileBubble,
+  InviteBubble,
+  InviteCard,
+  VoiceBubble,
+  VoiceRecorder,
+} from "./src/chatmedia";
+import { DrawGame } from "./src/games/drawGuess";
+import {
+  ChatGroup,
+  ChatsStore,
+  friendKey,
+  groupKey,
+  useChats,
+} from "./src/chats";
 
 type Page =
   | "Home"
@@ -52,6 +76,10 @@ type Page =
   | "Person"
   | "Encounter"
   | "Conversation"
+  | "People"
+  | "GroupChat"
+  | "Call"
+  | "GameRoom"
   | "Events"
   | "Settings"
   | "Plus"
@@ -60,7 +88,7 @@ type Page =
   | "Outfit"
   | "MyPosts";
 type FeedTab = "for_you" | "friends" | "circles";
-type CreateKind = "post" | "video" | "game" | "meetup";
+type CreateKind = "post" | "game" | "meetup";
 type Event = {
   id: number;
   title: string;
@@ -68,7 +96,26 @@ type Event = {
   location: string | null;
   creator: Person;
 };
-type Message = { id: number; sender_id: number; body: string; kind: string };
+type Message = {
+  id: number;
+  sender_id: number;
+  body: string;
+  kind: string;
+  media_url?: string | null;
+  game_room_id?: number | null;
+};
+type GameRoom = {
+  id: number;
+  kind: "uno" | "draw_guess";
+  status: "inviting" | "active" | "ended";
+  host: Person;
+  guest: Person;
+  winner_id: number | null;
+};
+const GAME_LABEL: Record<string, string> = {
+  uno: "UNO",
+  draw_guess: "Draw & Guess",
+};
 const tabs: { page: Page | "Create"; icon: IconName; activeIcon: IconName }[] =
   [
     { page: "Home", icon: "home-outline", activeIcon: "home" },
@@ -77,6 +124,7 @@ const tabs: { page: Page | "Create"; icon: IconName; activeIcon: IconName }[] =
     { page: "Chats", icon: "chatbubble-outline", activeIcon: "chatbubble" },
     { page: "Profile", icon: "person-outline", activeIcon: "person" },
   ];
+const EMOJIS = ["😊", "😂", "❤️", "👍", "🎉", "🙏", "🔥", "😅", "🥹", "👀", "✨", "☕"];
 const unavailable = (feature: string) =>
   Alert.alert(
     `${feature} isn't available yet`,
@@ -138,6 +186,10 @@ function Aeolia() {
   const [aiKey, setAiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [followed, setFollowed] = useState<number[]>([]);
+  const [group, setGroup] = useState<ChatGroup | null>(null);
+  const [call, setCall] = useState<{ person: Person; kind: "voice" | "video" } | null>(null);
+  const [gameRoomId, setGameRoomId] = useState<number | null>(null);
+  const chats = useChats();
   const me = account.data;
   const circles = circleData.data;
   const navigate = (next: Page) => {
@@ -198,6 +250,26 @@ function Aeolia() {
     setPerson(p);
     navigate("Conversation");
   };
+  const openGroup = (g: ChatGroup) => {
+    setGroup(g);
+    navigate("GroupChat");
+  };
+  const startCall = (person: Person, kind: "voice" | "video") => {
+    setCall({ person, kind });
+    navigate("Call");
+  };
+  // TEMP-VERIFY: auto-open draw_guess room; remove after.
+  useEffect(() => {
+    setGameRoomId(4);
+    setPage("GameRoom");
+  }, []);
+  const openGameRoom = (roomId: number, join: boolean) =>
+    run(async () => {
+      if (join)
+        await api(`/games/rooms/${roomId}/join`, json("POST", {}));
+      setGameRoomId(roomId);
+      navigate("GameRoom");
+    });
   const updateCircle = (item: Circle, kind: "follow" | "explore") =>
     run(async () => {
       await api(`/circles/${item.id}`, json("PATCH", { [kind]: !item[kind] }));
@@ -271,10 +343,17 @@ function Aeolia() {
       ? "Explore"
       : ["Settings", "Plus", "Outfit", "MyPosts"].includes(page)
         ? "Profile"
-        : page === "Conversation" || page === "Agent"
+        : ["Conversation", "Agent", "People", "GroupChat", "Call", "GameRoom"].includes(page)
           ? "Chats"
           : page;
-  const hideTabs = ["Agent", "Conversation", "Compose"].includes(page);
+  const hideTabs = [
+    "Agent",
+    "Conversation",
+    "Compose",
+    "GroupChat",
+    "Call",
+    "GameRoom",
+  ].includes(page);
   const content = () => {
     switch (page) {
       case "Home":
@@ -1080,11 +1159,32 @@ function Aeolia() {
         return (
           <Chats
             me={me}
+            chats={chats}
             openAgent={() => navigate("Agent")}
-            openPerson={openPerson}
             openChat={openChat}
+            openGroup={openGroup}
+            openPeople={() => navigate("People")}
           />
         );
+      case "People":
+        return (
+          <People
+            chats={chats}
+            back={back}
+            openChat={openChat}
+            openGroup={openGroup}
+            openPerson={openPerson}
+          />
+        );
+      case "GroupChat":
+        return group ? (
+          <GroupConversation
+            group={group}
+            me={me}
+            chats={chats}
+            back={back}
+          />
+        ) : null;
       case "Conversation":
         return person ? (
           <Conversation
@@ -1092,10 +1192,29 @@ function Aeolia() {
             me={me}
             back={back}
             openProfile={() => openPerson(person.id)}
+            startCall={(kind) => startCall(person, kind)}
+            openGameRoom={openGameRoom}
             reason={
               discoveries.data.find((x) => x.candidate?.id === person.id)
                 ?.reason
             }
+          />
+        ) : null;
+      case "GameRoom":
+        return gameRoomId ? (
+          <GameRoom
+            roomId={gameRoomId}
+            me={me}
+            back={back}
+            startCall={startCall}
+          />
+        ) : null;
+      case "Call":
+        return call ? (
+          <CallScreen
+            person={call.person}
+            kind={call.kind}
+            end={back}
           />
         ) : null;
       case "Events":
@@ -1109,9 +1228,8 @@ function Aeolia() {
           </>
         );
       case "Compose":
-        return createKind === "post" || createKind === "video" ? (
+        return createKind === "post" ? (
           <MediaComposer
-            kind={createKind}
             circle={postCircle}
             onBack={back}
             onCreated={() => {
@@ -1351,14 +1469,8 @@ function Aeolia() {
             {
               kind: "post",
               name: "Post",
-              body: "Share photos or thoughts",
+              body: "Share photos, videos or thoughts",
               icon: "image-outline",
-            },
-            {
-              kind: "video",
-              name: "Video",
-              body: "Share a short clip",
-              icon: "videocam-outline",
             },
             {
               kind: "game",
@@ -2154,27 +2266,11 @@ function Agent({
     </>
   );
 }
-function Chats({
-  me,
-  openAgent,
-  openPerson,
-  openChat,
-}: {
-  me: Person | null;
-  openAgent: () => void;
-  openPerson: (id: number) => void;
-  openChat: (p: Person) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [add, setAdd] = useState(false);
-  const [handle, setHandle] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [friendsOpen, setFriendsOpen] = useState(true);
-  const [groupsOpen, setGroupsOpen] = useState(true);
+// The prototype has four demo accounts; only mutual friends can be chatted with.
+function useFriends() {
   const [friends, setFriends] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
-  // The prototype has four demo accounts; only mutual friends belong in Chats.
+  const [error, setError] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -2192,9 +2288,90 @@ function Chats({
   useEffect(() => {
     load();
   }, [load]);
-  const matches = friends.filter((p) =>
-    `${p.name} ${p.handle}`.toLowerCase().includes(query.toLowerCase()),
-  );
+  return { friends, loading, error, load };
+}
+
+type Convo =
+  | { key: string; kind: "friend"; person: Person; name: string }
+  | { key: string; kind: "group"; group: ChatGroup; name: string };
+
+function Chats({
+  me,
+  chats,
+  openAgent,
+  openChat,
+  openGroup,
+  openPeople,
+}: {
+  me: Person | null;
+  chats: ChatsStore;
+  openAgent: () => void;
+  openChat: (p: Person) => void;
+  openGroup: (g: ChatGroup) => void;
+  openPeople: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const { friends, loading, error, load } = useFriends();
+  // Friends and groups share one conversation list, pinned first, newest actions kept local.
+  const items: Convo[] = [
+    ...friends.map(
+      (p): Convo => ({
+        key: friendKey(p.id),
+        kind: "friend",
+        person: p,
+        name: p.name,
+      }),
+    ),
+    ...chats.prefs.groups.map(
+      (g): Convo => ({ key: groupKey(g.id), kind: "group", group: g, name: g.name }),
+    ),
+  ].filter((i) => !chats.isHidden(i.key));
+  const order = chats.sortKeys(items.map((i) => i.key));
+  const sorted = order
+    .map((k) => items.find((i) => i.key === k))
+    .filter((i): i is Convo => !!i)
+    .filter((i) => i.name.toLowerCase().includes(query.toLowerCase()));
+
+  const rowActions = (item: Convo, index: number) => {
+    const pinned = chats.isPinned(item.key);
+    const prev = sorted[index - 1];
+    const next = sorted[index + 1];
+    const canUp = prev && chats.isPinned(prev.key) === pinned;
+    const canDown = next && chats.isPinned(next.key) === pinned;
+    const buttons: {
+      text: string;
+      style?: "cancel" | "destructive";
+      onPress?: () => void;
+    }[] = [
+      { text: pinned ? "Unpin" : "Pin to top", onPress: () => chats.togglePin(item.key) },
+    ];
+    if (canUp) buttons.push({ text: "Move up", onPress: () => chats.swap(item.key, prev.key) });
+    if (canDown)
+      buttons.push({ text: "Move down", onPress: () => chats.swap(item.key, next.key) });
+    if (item.kind === "group")
+      buttons.push({
+        text: "Delete group",
+        style: "destructive",
+        onPress: () =>
+          Alert.alert("Delete this group?", `"${item.name}" will be removed for you.`, [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete",
+              style: "destructive",
+              onPress: () => chats.deleteGroup(item.group.id),
+            },
+          ]),
+      });
+    else
+      buttons.push({
+        text: "Remove from chats",
+        style: "destructive",
+        onPress: () => chats.remove(item.key),
+      });
+    buttons.push({ text: "Cancel", style: "cancel" });
+    Alert.alert(item.name, pinned ? "Pinned conversation" : undefined, buttons);
+  };
+
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
@@ -2202,10 +2379,10 @@ function Chats({
     >
       <View style={ui.between}>
         <Text style={styles.title}>Chats</Text>
-        <TextLink
-          label="Add by ID"
-          icon="person-add-outline"
-          onPress={() => setAdd(!add)}
+        <IconButton
+          name="people-outline"
+          label="Friends and groups"
+          onPress={openPeople}
         />
       </View>
       <Field
@@ -2214,38 +2391,6 @@ function Chats({
         placeholder="Search conversations…"
         style={{ marginTop: 16, backgroundColor: "#EFF3F1", borderWidth: 0 }}
       />
-      {add && (
-        <View style={[styles.card, { marginBottom: 16 }]}>
-          <Field
-            value={handle}
-            onChangeText={setHandle}
-            placeholder="Aeolia ID"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Button
-            label="Find person"
-            loading={busy}
-            disabled={!handle.trim()}
-            onPress={async () => {
-              setBusy(true);
-              try {
-                const p = await api<Person>(
-                  `/users/by-id/${encodeURIComponent(handle.trim().replace(/^@/, ""))}`,
-                );
-                openPerson(p.id);
-              } catch (e) {
-                Alert.alert(
-                  "Could not find this person",
-                  e instanceof Error ? e.message : String(e),
-                );
-              } finally {
-                setBusy(false);
-              }
-            }}
-          />
-        </View>
-      )}
       <Pressable
         accessibilityRole="button"
         onPress={openAgent}
@@ -2263,80 +2408,80 @@ function Chats({
           </Text>
         </View>
         <View style={{ alignItems: "center", gap: 5 }}>
-          <Icon name="pin-outline" size={15} />
+          <Icon name="pin" size={15} />
           <Text style={styles.muted}>Pinned</Text>
         </View>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: friendsOpen }}
-        onPress={() => setFriendsOpen(!friendsOpen)}
-        style={ui.group}
-      >
-        <Icon name="people" />
-        <Text style={[ui.rowTitle, { flex: 1 }]}>
-          Friends · {friends.length}
-        </Text>
-        <Icon
-          name={friendsOpen ? "chevron-down" : "chevron-forward"}
-          size={18}
-        />
-      </Pressable>
-      {friendsOpen &&
-        (loading ? (
-          <Skeleton />
-        ) : error ? (
-          <ErrorState message={error} onRetry={load} />
-        ) : matches.length ? (
-          matches.map((p) => (
-            <Pressable
-              accessibilityRole="button"
-              key={p.id}
-              accessibilityLabel={`Chat with ${p.name}`}
-              onPress={() => openChat(p)}
-              style={ui.personRow}
-            >
-              <Avatar outfit={p.outfit} uri={p.avatar_url} />
-              <View style={{ flex: 1 }}>
-                <Text style={ui.rowTitle}>{p.name}</Text>
-                <ChatPreview person={p} />
-              </View>
-              <Icon name="chevron-forward" size={16} />
-            </Pressable>
-          ))
-        ) : (
-          <EmptyState
-            icon="people-outline"
-            title={query ? "No matching friends" : "Your people will be here"}
-            body="Follow each other to start a conversation."
-            action={
-              <Button
-                label="Add by ID"
-                secondary
-                onPress={() => setAdd(true)}
-              />
+      {loading ? (
+        <Skeleton />
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : sorted.length ? (
+        sorted.map((item, index) => (
+          <Pressable
+            accessibilityRole="button"
+            key={item.key}
+            accessibilityLabel={`Chat: ${item.name}`}
+            onPress={() =>
+              item.kind === "friend"
+                ? openChat(item.person)
+                : openGroup(item.group)
             }
-          />
-        ))}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: groupsOpen }}
-        onPress={() => setGroupsOpen(!groupsOpen)}
-        style={ui.group}
-      >
-        <Icon name="people-circle-outline" />
-        <Text style={[ui.rowTitle, { flex: 1 }]}>Groups</Text>
-        <Icon
-          name={groupsOpen ? "chevron-down" : "chevron-forward"}
-          size={18}
+            onLongPress={() => rowActions(item, index)}
+            style={ui.personRow}
+          >
+            {item.kind === "friend" ? (
+              <Avatar outfit={item.person.outfit} uri={item.person.avatar_url} />
+            ) : (
+              <GroupAvatar />
+            )}
+            <View style={{ flex: 1 }}>
+              <View style={ui.flexRow}>
+                {chats.isPinned(item.key) && (
+                  <Icon name="pin" size={12} color={c.teal} />
+                )}
+                <Text style={ui.rowTitle}>{item.name}</Text>
+              </View>
+              {item.kind === "friend" ? (
+                <ChatPreview person={item.person} />
+              ) : (
+                <GroupPreview group={item.group} chats={chats} />
+              )}
+            </View>
+            <IconButton
+              name="ellipsis-horizontal"
+              label={`Options for ${item.name}`}
+              onPress={() => rowActions(item, index)}
+            />
+          </Pressable>
+        ))
+      ) : (
+        <EmptyState
+          icon="chatbubbles-outline"
+          title={query ? "No matching conversations" : "No conversations yet"}
+          body="Tap the people icon to find friends or start a group."
+          action={
+            <Button label="Friends & groups" secondary onPress={openPeople} />
+          }
         />
-      </Pressable>
-      {groupsOpen && (
-        <Text style={[styles.muted, { padding: 18 }]}>
-          Group conversations aren't available yet.
-        </Text>
       )}
     </ScrollView>
+  );
+}
+function GroupAvatar({ size = 52 }: { size?: number }) {
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: "#E4EFE9",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Icon name="people" size={size * 0.5} color={c.teal} />
+    </View>
   );
 }
 function ChatPreview({ person }: { person: Person }) {
@@ -2352,39 +2497,510 @@ function ChatPreview({ person }: { person: Person }) {
     </Text>
   );
 }
+function GroupPreview({
+  group,
+  chats,
+}: {
+  group: ChatGroup;
+  chats: ChatsStore;
+}) {
+  const messages = chats.prefs.groupMessages[group.id] || [];
+  const last = messages[messages.length - 1];
+  return (
+    <Text style={styles.muted} numberOfLines={1}>
+      {last?.body ||
+        `${group.memberIds.length + 1} people · say something`}
+    </Text>
+  );
+}
+function People({
+  chats,
+  back,
+  openChat,
+  openGroup,
+  openPerson,
+}: {
+  chats: ChatsStore;
+  back: () => void;
+  openChat: (p: Person) => void;
+  openGroup: (g: ChatGroup) => void;
+  openPerson: (id: number) => void;
+}) {
+  const { friends, loading, error, load } = useFriends();
+  const [friendsOpen, setFriendsOpen] = useState(true);
+  const [groupsOpen, setGroupsOpen] = useState(true);
+  const [add, setAdd] = useState(false);
+  const [handle, setHandle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [picked, setPicked] = useState<number[]>([]);
+  const nameOf = (id: number) => friends.find((f) => f.id === id)?.name || `#${id}`;
+  return (
+    <>
+      <Header
+        title="People"
+        onBack={back}
+        right={
+          <IconButton
+            name="person-add-outline"
+            label="Add by ID"
+            onPress={() => setAdd(!add)}
+          />
+        }
+      />
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.body}
+      >
+        {add && (
+          <View style={[styles.card, { marginBottom: 4 }]}>
+            <Text style={[ui.rowTitle, { marginBottom: 8 }]}>
+              Add by Aeolia ID
+            </Text>
+            <Field
+              value={handle}
+              onChangeText={setHandle}
+              placeholder="Aeolia ID"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Button
+              label="Find person"
+              loading={busy}
+              disabled={!handle.trim()}
+              onPress={async () => {
+                setBusy(true);
+                try {
+                  const p = await api<Person>(
+                    `/users/by-id/${encodeURIComponent(handle.trim().replace(/^@/, ""))}`,
+                  );
+                  openPerson(p.id);
+                } catch (e) {
+                  Alert.alert(
+                    "Could not find this person",
+                    e instanceof Error ? e.message : String(e),
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            />
+          </View>
+        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: friendsOpen }}
+          onPress={() => setFriendsOpen(!friendsOpen)}
+          style={[ui.group, { marginTop: add ? 16 : 0 }]}
+        >
+          <Icon name="people" />
+          <Text style={[ui.rowTitle, { flex: 1 }]}>
+            Friends · {friends.length}
+          </Text>
+          <Icon
+            name={friendsOpen ? "chevron-down" : "chevron-forward"}
+            size={18}
+          />
+        </Pressable>
+        {friendsOpen && (
+          <>
+            {loading ? (
+              <Skeleton />
+            ) : error ? (
+              <ErrorState message={error} onRetry={load} />
+            ) : friends.length ? (
+              friends.map((p) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={p.id}
+                  accessibilityLabel={`Chat with ${p.name}`}
+                  onPress={() => openChat(p)}
+                  style={ui.personRow}
+                >
+                  <Avatar outfit={p.outfit} uri={p.avatar_url} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={ui.rowTitle}>{p.name}</Text>
+                    <Text style={styles.muted}>@{p.handle}</Text>
+                  </View>
+                  <Icon name="chatbubble-outline" size={16} />
+                </Pressable>
+              ))
+            ) : (
+              <EmptyState
+                icon="people-outline"
+                title="Your people will be here"
+                body="Follow each other to start a conversation."
+              />
+            )}
+          </>
+        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: groupsOpen }}
+          onPress={() => setGroupsOpen(!groupsOpen)}
+          style={ui.group}
+        >
+          <Icon name="people-circle-outline" />
+          <Text style={[ui.rowTitle, { flex: 1 }]}>
+            Groups · {chats.prefs.groups.length}
+          </Text>
+          <Icon
+            name={groupsOpen ? "chevron-down" : "chevron-forward"}
+            size={18}
+          />
+        </Pressable>
+        {groupsOpen && (
+          <>
+            <TextLink
+              label={creating ? "Close" : "New group"}
+              icon="add-circle-outline"
+              onPress={() => {
+                setCreating(!creating);
+                setPicked([]);
+                setGroupName("");
+              }}
+            />
+            {creating && (
+              <View style={[styles.card, { marginTop: 12 }]}>
+                <Field
+                  value={groupName}
+                  onChangeText={setGroupName}
+                  placeholder="Group name"
+                />
+                <Text style={[styles.muted, { marginVertical: 8 }]}>
+                  Choose members
+                </Text>
+                {friends.map((p) => {
+                  const on = picked.includes(p.id);
+                  return (
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: on }}
+                      key={p.id}
+                      onPress={() =>
+                        setPicked((ids) =>
+                          on ? ids.filter((x) => x !== p.id) : [...ids, p.id],
+                        )
+                      }
+                      style={[ui.flexRow, { paddingVertical: 10 }]}
+                    >
+                      <Icon
+                        name={on ? "checkbox" : "square-outline"}
+                        color={on ? c.teal : c.muted}
+                      />
+                      <Avatar size={34} outfit={p.outfit} uri={p.avatar_url} />
+                      <Text style={[ui.rowTitle, { flex: 1 }]}>{p.name}</Text>
+                    </Pressable>
+                  );
+                })}
+                <Button
+                  label="Create group"
+                  disabled={!groupName.trim() || picked.length < 2}
+                  onPress={() => {
+                    const g = chats.createGroup(groupName, picked);
+                    setCreating(false);
+                    openGroup(g);
+                  }}
+                />
+                {picked.length < 2 && (
+                  <Text style={[styles.muted, { marginTop: 8 }]}>
+                    Pick at least two people.
+                  </Text>
+                )}
+              </View>
+            )}
+            {chats.prefs.groups.length ? (
+              chats.prefs.groups.map((g) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={g.id}
+                  accessibilityLabel={`Open group ${g.name}`}
+                  onPress={() => openGroup(g)}
+                  style={ui.personRow}
+                >
+                  <GroupAvatar size={44} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={ui.rowTitle}>{g.name}</Text>
+                    <Text style={styles.muted} numberOfLines={1}>
+                      You · {g.memberIds.map(nameOf).join(", ")}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-forward" size={16} />
+                </Pressable>
+              ))
+            ) : (
+              <Text style={[styles.muted, { padding: 18 }]}>
+                No groups yet. Create one to chat with a few friends at once.
+              </Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </>
+  );
+}
+function GroupConversation({
+  group,
+  me,
+  chats,
+  back,
+}: {
+  group: ChatGroup;
+  me: Person | null;
+  chats: ChatsStore;
+  back: () => void;
+}) {
+  const [members, setMembers] = useState<Person[]>([]);
+  const [draft, setDraft] = useState("");
+  const list = useRef<ScrollView>(null);
+  useEffect(() => {
+    Promise.all(
+      group.memberIds.map((id) => api<Person>(`/users/${id}`).catch(() => null)),
+    ).then((people) =>
+      setMembers(people.filter((p): p is Person => !!p)),
+    );
+  }, [group.memberIds]);
+  const messages = chats.prefs.groupMessages[group.id] || [];
+  const senderName = (id: number) =>
+    id === me?.id ? "You" : members.find((m) => m.id === id)?.name || `#${id}`;
+  const send = () => {
+    if (!draft.trim() || !me) return;
+    chats.sendGroupMessage(group.id, me.id, draft.trim());
+    setDraft("");
+  };
+  return (
+    <>
+      <View style={ui.chatHeader}>
+        <IconButton name="chevron-back" label="Back to chats" onPress={back} />
+        <View style={[ui.flexRow, { flex: 1, alignItems: "center", gap: 8 }]}>
+          <GroupAvatar size={34} />
+          <View style={{ flexShrink: 1 }}>
+            <Text style={ui.rowTitle}>{group.name}</Text>
+            <Text style={styles.muted} numberOfLines={1}>
+              You, {members.map((m) => m.name).join(", ")}
+            </Text>
+          </View>
+        </View>
+      </View>
+      <View
+        style={[
+          ui.notice,
+          { marginHorizontal: 20, marginTop: 8, marginBottom: 10 },
+        ]}
+      >
+        <Icon name="people" size={20} />
+        <View style={{ flex: 1 }}>
+          <Text style={ui.rowTitle}>Group chat</Text>
+          <Text style={styles.muted}>
+            Messages are saved on this device in the prototype.
+          </Text>
+        </View>
+      </View>
+      <ScrollView
+        ref={list}
+        contentContainerStyle={styles.body}
+        onContentSizeChange={() =>
+          list.current?.scrollToEnd({ animated: true })
+        }
+      >
+        {messages.length ? (
+          messages.map((m) => (
+            <View key={m.id}>
+              {m.senderId !== me?.id && (
+                <Text style={[styles.muted, { marginLeft: 6, marginBottom: 2 }]}>
+                  {senderName(m.senderId)}
+                </Text>
+              )}
+              <ChatBubble mine={m.senderId === me?.id} body={m.body} />
+            </View>
+          ))
+        ) : (
+          <EmptyState
+            icon="chatbubbles-outline"
+            title={`Start ${group.name}`}
+            body="Say hello to everyone at once."
+          />
+        )}
+      </ScrollView>
+      <View style={ui.composer}>
+        <Field
+          value={draft}
+          onChangeText={setDraft}
+          multiline
+          placeholder={`Message ${group.name}…`}
+          style={ui.messageInput}
+        />
+        <IconButton
+          name="send"
+          label="Send message"
+          disabled={!draft.trim()}
+          onPress={send}
+        />
+      </View>
+    </>
+  );
+}
 function Conversation({
   person,
   me,
   back,
   openProfile,
+  startCall,
+  openGameRoom,
   reason,
 }: {
   person: Person;
   me: Person | null;
   back: () => void;
   openProfile: () => void;
+  startCall: (kind: "voice" | "video") => void;
+  openGameRoom: (roomId: number, join: boolean) => void;
   reason?: string;
 }) {
   const r = useResource<Message[]>(`/messages/${person.id}`, []);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [panel, setPanel] = useState(false);
+  const [emoji, setEmoji] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [compose, setCompose] = useState<"game" | "meetup" | null>(null);
+  const [detail, setDetail] = useState("");
+  const [playSheet, setPlaySheet] = useState(false);
   const list = useRef<ScrollView>(null);
-  const send = async () => {
-    if (!draft.trim() || busy) return;
+  const invite = (kind: "uno" | "draw_guess") =>
+    Alert.alert(
+      `Invite ${person.name} to ${GAME_LABEL[kind]}?`,
+      "A quick game for the two of you.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Invite",
+          onPress: async () => {
+            setPlaySheet(false);
+            setBusy(true);
+            setError("");
+            try {
+              await api<{ room_id: number }>(
+                "/games/rooms",
+                json("POST", { kind, guest_id: person.id }),
+              );
+              await r.reload();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  const post = async (payload: Record<string, unknown>) => {
     setBusy(true);
     setError("");
     try {
+      await api<{ id: number }>("/messages", json("POST", payload));
+      await r.reload();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const send = async () => {
+    if (!draft.trim() || busy) return;
+    if (await post({ recipient_id: person.id, body: draft.trim() })) setDraft("");
+  };
+  const sendUpload = async (uri: string, mime: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      const media = await uploadMedia(uri, mime);
       await api<{ id: number }>(
         "/messages",
-        json("POST", { recipient_id: person.id, body: draft.trim() }),
+        json("POST", { recipient_id: person.id, media_id: media.id }),
       );
-      setDraft("");
       await r.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+  const imageMime = (asset: ImagePicker.ImagePickerAsset) => {
+    const extension = asset.uri.split(".").pop()?.toLowerCase();
+    return (
+      asset.mimeType ||
+      (extension === "png"
+        ? "image/png"
+        : extension === "heic"
+          ? "image/heic"
+          : "image/jpeg")
+    );
+  };
+  const pickPhoto = async () => {
+    setPanel(false);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setError("Allow photo access to share an image.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.9,
+    });
+    if (result.canceled) return;
+    await sendUpload(result.assets[0].uri, imageMime(result.assets[0]));
+  };
+  const takePhoto = async () => {
+    setPanel(false);
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      setError("Allow camera access to take a photo.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.9 });
+    if (result.canceled) return;
+    await sendUpload(result.assets[0].uri, imageMime(result.assets[0]));
+  };
+  const pickFile = async () => {
+    setPanel(false);
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (result.canceled) return;
+    const file = result.assets[0];
+    setBusy(true);
+    setError("");
+    try {
+      const media = await uploadMedia(
+        file.uri,
+        file.mimeType || "application/octet-stream",
+      );
+      await api<{ id: number }>(
+        "/messages",
+        json("POST", {
+          recipient_id: person.id,
+          kind: "file",
+          body: file.name || "File",
+          media_id: media.id,
+        }),
+      );
+      await r.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const sendInvite = async () => {
+    if (!detail.trim() || !compose || busy) return;
+    if (
+      await post({ recipient_id: person.id, kind: compose, body: detail.trim() })
+    ) {
+      setDetail("");
+      setCompose(null);
     }
   };
   return (
@@ -2401,29 +3017,13 @@ function Conversation({
         </Pressable>
         <IconButton
           name="call-outline"
-          label="Voice call · unavailable"
-          onPress={() => unavailable("Voice calls")}
+          label="Voice call"
+          onPress={() => startCall("voice")}
         />
         <IconButton
           name="videocam-outline"
-          label="Video call · unavailable"
-          onPress={() => unavailable("Video calls")}
-        />
-        <IconButton
-          name="ellipsis-vertical"
-          label="Conversation options"
-          onPress={() =>
-            Alert.alert(
-              "Conversation",
-              [person.name, "History management is not connected yet."].join(
-                "\n",
-              ),
-              [
-                { text: "View profile", onPress: openProfile },
-                { text: "Close", style: "cancel" },
-              ],
-            )
-          }
+          label="Video call"
+          onPress={() => startCall("video")}
         />
       </View>
       <View
@@ -2454,17 +3054,39 @@ function Conversation({
         ) : r.error ? (
           <ErrorState message={r.error} onRetry={r.reload} />
         ) : r.data.length ? (
-          r.data.map((m) => (
-            <ChatBubble
-              key={m.id}
-              mine={m.sender_id === me?.id}
-              body={
-                m.kind === "text"
-                  ? m.body
-                  : `${m.kind} messages are not supported yet.`
-              }
-            />
-          ))
+          r.data.map((m) => {
+            const mine = m.sender_id === me?.id;
+            if (m.kind === "image" && m.media_url)
+              return <ChatImageBubble key={m.id} url={m.media_url} mine={mine} />;
+            if (m.kind === "voice" && m.media_url)
+              return <VoiceBubble key={m.id} url={m.media_url} mine={mine} />;
+            if (m.kind === "file")
+              return (
+                <FileBubble
+                  key={m.id}
+                  name={m.body || "File"}
+                  mine={mine}
+                  onPress={() =>
+                    Alert.alert(m.body || "File", "File preview isn’t wired in the prototype.")
+                  }
+                />
+              );
+            if (m.kind === "game" || m.kind === "meetup")
+              return (
+                <InviteBubble key={m.id} kind={m.kind} body={m.body} mine={mine} />
+              );
+            if (m.kind === "game_invite" && m.game_room_id)
+              return (
+                <InviteCard
+                  key={m.id}
+                  gameLabel={GAME_LABEL[m.body] || "a game"}
+                  who={person.name}
+                  mine={mine}
+                  onOpen={() => openGameRoom(m.game_room_id!, !mine)}
+                />
+              );
+            return <ChatBubble key={m.id} mine={mine} body={m.body} />;
+          })
         ) : (
           <EmptyState
             icon="chatbubble-outline"
@@ -2472,6 +3094,7 @@ function Conversation({
             body="Every good friendship starts somewhere."
           />
         )}
+        {busy && <Text style={styles.muted}>Sending…</Text>}
         {!!error && (
           <Text
             accessibilityRole="alert"
@@ -2481,27 +3104,414 @@ function Conversation({
           </Text>
         )}
       </ScrollView>
-      <View style={ui.composer}>
-        <IconButton
-          name="add-circle-outline"
-          label="Add media · unavailable"
-          onPress={() => unavailable("Message attachments")}
+      {compose && (
+        <View style={ui.inviteComposer}>
+          <View style={ui.flexRow}>
+            <Icon
+              name={compose === "game" ? "game-controller-outline" : "calendar-outline"}
+              color={c.teal}
+            />
+            <Text style={[ui.rowTitle, { flex: 1 }]}>
+              {compose === "game" ? "Game invite" : "Meeting plan"}
+            </Text>
+            <IconButton
+              name="close"
+              label="Cancel"
+              onPress={() => {
+                setCompose(null);
+                setDetail("");
+              }}
+            />
+          </View>
+          <Field
+            value={detail}
+            onChangeText={setDetail}
+            placeholder={
+              compose === "game"
+                ? "Which game? e.g. Catan tonight at 8"
+                : "What’s the plan? e.g. Coffee Sat 10am, Blue Bottle"
+            }
+            style={{ marginTop: 8, marginBottom: 0 }}
+          />
+          <Button
+            label={compose === "game" ? "Send game invite" : "Send meeting plan"}
+            loading={busy}
+            disabled={!detail.trim()}
+            onPress={sendInvite}
+          />
+        </View>
+      )}
+      {recording ? (
+        <VoiceRecorder
+          onCancel={() => setRecording(false)}
+          onDone={(uri) => {
+            setRecording(false);
+            sendUpload(uri, "audio/mp4");
+          }}
         />
+      ) : (
+        <>
+          {emoji && (
+            <View style={ui.emojiRow}>
+              {EMOJIS.map((e) => (
+                <Pressable
+                  key={e}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Insert ${e}`}
+                  onPress={() => setDraft((d) => d + e)}
+                  style={ui.emojiKey}
+                >
+                  <Text style={{ fontSize: 26 }}>{e}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <View style={ui.composer}>
+            <IconButton
+              name="mic-outline"
+              label="Record voice message"
+              disabled={busy || !!r.error}
+              onPress={() => {
+                setPanel(false);
+                setEmoji(false);
+                Keyboard.dismiss();
+                setRecording(true);
+              }}
+            />
+            <Field
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              placeholder={`Message ${person.name}…`}
+              style={ui.messageInput}
+              onFocus={() => {
+                setPanel(false);
+                setEmoji(false);
+              }}
+            />
+            <IconButton
+              name="happy-outline"
+              label="Emoji"
+              onPress={() => {
+                Keyboard.dismiss();
+                setPanel(false);
+                setEmoji((v) => !v);
+              }}
+            />
+            {draft.trim() ? (
+              <IconButton
+                name={busy ? "hourglass-outline" : "send"}
+                label="Send message"
+                disabled={busy || !!r.error}
+                onPress={send}
+              />
+            ) : (
+              <IconButton
+                name="add-circle-outline"
+                label="More: album, camera, file, game, meeting"
+                disabled={busy}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setEmoji(false);
+                  setPanel((v) => !v);
+                }}
+              />
+            )}
+          </View>
+          {panel && (
+            <View style={ui.tray}>
+              {(
+                [
+                  { icon: "images-outline", label: "Album", onPress: pickPhoto },
+                  { icon: "camera-outline", label: "Camera", onPress: takePhoto },
+                  { icon: "document-outline", label: "File", onPress: pickFile },
+                  {
+                    icon: "game-controller-outline",
+                    label: "Play",
+                    onPress: () => {
+                      setPanel(false);
+                      setPlaySheet(true);
+                    },
+                  },
+                  {
+                    icon: "calendar-outline",
+                    label: "Meetup plan",
+                    onPress: () => {
+                      setPanel(false);
+                      setDetail("");
+                      setCompose("meetup");
+                    },
+                  },
+                ] as const
+              ).map((t) => (
+                <Pressable
+                  key={t.label}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.label}
+                  onPress={t.onPress}
+                  style={ui.trayTile}
+                >
+                  <View style={ui.trayIcon}>
+                    <Icon name={t.icon} size={26} color="#4A4A4A" />
+                  </View>
+                  <Text style={ui.trayLabel}>{t.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </>
+      )}
+      <BottomSheet
+        visible={playSheet}
+        title="Play together"
+        close={() => setPlaySheet(false)}
+      >
+        {(
+          [
+            {
+              kind: "draw_guess",
+              icon: "brush-outline",
+              name: "Draw & Guess",
+              body: "Draw it. Let them guess.",
+            },
+            {
+              kind: "uno",
+              icon: "albums-outline",
+              name: "UNO",
+              body: "Classic card game.",
+            },
+            {
+              kind: null,
+              icon: "help-circle-outline",
+              name: "Questions",
+              body: "Get to know each other · later",
+            },
+          ] as const
+        ).map((x) => (
+          <Pressable
+            key={x.name}
+            accessibilityRole="button"
+            disabled={!x.kind}
+            onPress={() => x.kind && invite(x.kind)}
+            style={({ pressed }) => [
+              ui.createRow,
+              !x.kind && { opacity: 0.45 },
+              pressed && x.kind && { backgroundColor: c.mint },
+            ]}
+          >
+            <View style={ui.iconCircle}>
+              <Icon name={x.icon} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={ui.rowTitle}>{x.name}</Text>
+              <Text style={styles.muted}>{x.body}</Text>
+            </View>
+            {x.kind && <Icon name="chevron-forward" size={16} />}
+          </Pressable>
+        ))}
+      </BottomSheet>
+    </>
+  );
+}
+function PlayerSlot({ person, cards }: { person: Person; cards: number }) {
+  return (
+    <View style={{ alignItems: "center", gap: 6, flex: 1 }}>
+      <Avatar size={56} outfit={person.outfit} uri={person.avatar_url} />
+      <Text style={ui.rowTitle} numberOfLines={1}>
+        {person.name}
+      </Text>
+      <Text style={styles.muted}>{cards} cards</Text>
+    </View>
+  );
+}
+function RoomChat({ otherId, me }: { otherId: number; me: Person | null }) {
+  const msgs = useResource<Message[]>(`/messages/${otherId}`, []);
+  const [draft, setDraft] = useState("");
+  const list = useRef<ScrollView>(null);
+  const send = async () => {
+    if (!draft.trim()) return;
+    const body = draft.trim();
+    setDraft("");
+    try {
+      await api("/messages", json("POST", { recipient_id: otherId, body }));
+      await msgs.reload();
+    } catch {
+      setDraft(body);
+    }
+  };
+  return (
+    <>
+      <ScrollView
+        ref={list}
+        contentContainerStyle={{ padding: 20, paddingTop: 10 }}
+        onContentSizeChange={() => list.current?.scrollToEnd({ animated: true })}
+      >
+        {msgs.data.slice(-20).map((m) => {
+          const mine = m.sender_id === me?.id;
+          if (m.kind === "image" && m.media_url)
+            return <ChatImageBubble key={m.id} url={m.media_url} mine={mine} />;
+          if (m.kind === "voice" && m.media_url)
+            return <VoiceBubble key={m.id} url={m.media_url} mine={mine} />;
+          if (m.kind === "text" || !m.kind)
+            return <ChatBubble key={m.id} mine={mine} body={m.body} />;
+          return null;
+        })}
+      </ScrollView>
+      <View style={ui.composer}>
         <Field
           value={draft}
           onChangeText={setDraft}
           multiline
-          placeholder={`Message ${person.name}…`}
+          placeholder="Say something…"
           style={ui.messageInput}
         />
         <IconButton
-          name={busy ? "hourglass-outline" : "send"}
+          name="send"
           label="Send message"
-          disabled={busy || !draft.trim() || !!r.error}
+          disabled={!draft.trim()}
           onPress={send}
         />
       </View>
     </>
+  );
+}
+function GameRoom({
+  roomId,
+  me,
+  back,
+  startCall,
+}: {
+  roomId: number;
+  me: Person | null;
+  back: () => void;
+  startCall: (person: Person, kind: "voice" | "video") => void;
+}) {
+  const room = useResource<GameRoom | null>(`/games/rooms/${roomId}`, null);
+  const data = room.data;
+  const other = data ? (data.host.id === me?.id ? data.guest : data.host) : null;
+  return (
+    <>
+      <View style={ui.chatHeader}>
+        <IconButton name="chevron-back" label="Leave game" onPress={back} />
+        <Text style={[ui.rowTitle, { flex: 1, textAlign: "center" }]}>
+          {data ? GAME_LABEL[data.kind] : "Game"}
+        </Text>
+        {other ? (
+          <>
+            <IconButton
+              name="call-outline"
+              label="Voice call"
+              onPress={() => startCall(other, "voice")}
+            />
+            <IconButton
+              name="videocam-outline"
+              label="Video call"
+              onPress={() => startCall(other, "video")}
+            />
+          </>
+        ) : (
+          <View style={{ width: 44 }} />
+        )}
+      </View>
+      {room.loading || !data || !other ? (
+        <Skeleton />
+      ) : data.kind === "draw_guess" ? (
+        <DrawGame roomId={data.id} me={me} host={data.host} guest={data.guest} />
+      ) : (
+        <>
+          <View style={ui.gamePlayers}>
+            <PlayerSlot person={data.host} cards={7} />
+            <PlayerSlot person={data.guest} cards={7} />
+          </View>
+          <View style={ui.gameArea}>
+            <Icon name="albums-outline" size={42} color={c.muted} />
+            <Text style={styles.heading}>
+              {data.status === "inviting"
+                ? `Waiting for ${other.name} to join…`
+                : `${GAME_LABEL[data.kind]} room is ready`}
+            </Text>
+            <Text style={[styles.muted, { textAlign: "center" }]}>
+              Live UNO arrives next. For now, talk while you get set up.
+            </Text>
+          </View>
+          <RoomChat otherId={other.id} me={me} />
+        </>
+      )}
+    </>
+  );
+}
+function CallScreen({
+  person,
+  kind,
+  end,
+}: {
+  person: Person;
+  kind: "voice" | "video";
+  end: () => void;
+}) {
+  const [muted, setMuted] = useState(false);
+  const [speaker, setSpeaker] = useState(kind === "video");
+  return (
+    <View style={ui.call}>
+      <View style={{ alignItems: "center", gap: 16, marginTop: 40 }}>
+        <Avatar size={128} outfit={person.outfit} uri={person.avatar_url} />
+        <Text style={[styles.title, { color: c.white }]}>{person.name}</Text>
+        <Text style={{ color: "#C9DBDA", fontSize: 15 }}>
+          {kind === "video" ? "Video call" : "Voice call"} · Calling…
+        </Text>
+        <Text style={{ color: "#8FA9A8", textAlign: "center", paddingHorizontal: 40 }}>
+          Live calls aren’t connected in this prototype.
+        </Text>
+      </View>
+      <View style={ui.callControls}>
+        <CallButton
+          icon={muted ? "mic-off" : "mic"}
+          label={muted ? "Unmute" : "Mute"}
+          active={muted}
+          onPress={() => setMuted(!muted)}
+        />
+        <CallButton
+          icon="call"
+          label="End call"
+          danger
+          onPress={end}
+        />
+        <CallButton
+          icon={speaker ? "volume-high" : "volume-medium"}
+          label="Speaker"
+          active={speaker}
+          onPress={() => setSpeaker(!speaker)}
+        />
+      </View>
+    </View>
+  );
+}
+function CallButton({
+  icon,
+  label,
+  onPress,
+  active,
+  danger,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  active?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={[
+        ui.callButton,
+        danger && { backgroundColor: c.rose },
+        active && !danger && { backgroundColor: c.teal },
+      ]}
+    >
+      <Icon name={icon} size={26} color={c.white} />
+    </Pressable>
   );
 }
 function Events({
@@ -3029,8 +4039,43 @@ const ui = StyleSheet.create({
     marginBottom: 0,
     maxHeight: 120,
     borderRadius: 23,
-    backgroundColor: "#EEF3F1",
-    borderWidth: 0,
+    backgroundColor: c.white,
+    borderWidth: 1,
+    borderColor: c.line,
+  },
+  tray: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    backgroundColor: "#F3F5F3",
+    paddingVertical: 18,
+    paddingHorizontal: 8,
+  },
+  trayTile: {
+    width: "25%",
+    alignItems: "center",
+    paddingVertical: 12,
+    gap: 8,
+  },
+  trayIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 18,
+    backgroundColor: c.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trayLabel: { color: c.muted, fontSize: 12 },
+  emojiRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    backgroundColor: "#F3F5F3",
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  emojiKey: {
+    width: "12.5%",
+    alignItems: "center",
+    paddingVertical: 8,
   },
   group: {
     flexDirection: "row",
@@ -3055,6 +4100,49 @@ const ui = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 6,
     minHeight: 56,
+  },
+  inviteComposer: {
+    marginHorizontal: 14,
+    marginBottom: 6,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: c.mint,
+    gap: 6,
+  },
+  gamePlayers: {
+    flexDirection: "row",
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderColor: c.line,
+  },
+  gameArea: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 28,
+    paddingHorizontal: 30,
+    backgroundColor: "#F3F5F3",
+  },
+  call: {
+    flex: 1,
+    backgroundColor: "#0C2A2E",
+    justifyContent: "space-between",
+    paddingBottom: 60,
+    paddingTop: 30,
+  },
+  callControls: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 28,
+  },
+  callButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   eventCover: {
     width: 100,

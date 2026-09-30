@@ -106,6 +106,34 @@ export const mediaSource = (uri: string) =>
   uri.startsWith("/media/")
     ? { uri: BASE + uri, headers: { "X-User-Id": "1" } }
     : { uri };
+
+// WebSocket base derived from the API base (http→ws, https→wss).
+export const WS_BASE = BASE.replace(/^http/, "ws");
+export const gameSocketURL = (roomId: number, userId: number) =>
+  `${WS_BASE}/ws/games/${roomId}?user_id=${userId}`;
+
+export type DrawStroke = {
+  points: [number, number][];
+  color?: string;
+  width?: number;
+};
+export type DrawGuessState = {
+  phase: "choosing" | "drawing" | "round_end" | "finished";
+  players: number[];
+  scores: Record<string, number>;
+  drawer_id: number;
+  turn: number;
+  total_turns: number;
+  duration: number;
+  is_drawer: boolean;
+  correct: Record<string, number>;
+  winner_id: number | null;
+  version: number;
+  word?: string;
+  hint?: string;
+  word_length?: number;
+  word_options?: string[];
+};
 export const mediaUploadURL = BASE + "/media";
 
 

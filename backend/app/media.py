@@ -8,10 +8,24 @@ from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .models import AgentAvatar, Block, MediaAsset, Post, PostAsset, User
+from .models import AgentAvatar, Block, MediaAsset, Message, Post, PostAsset, User
 
 MAX_BYTES = 64 * 1024 * 1024
-MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif", "video/mp4", "video/quicktime"}
+MEDIA_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif",
+               "video/mp4", "video/quicktime",
+               "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/aac", "audio/mpeg", "audio/wav", "audio/webm"}
+# Documents sent as chat attachments. The prototype stores them as opaque files.
+DOCUMENT_TYPES = {"application/pdf", "application/zip", "text/plain", "text/csv",
+                  "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                  "application/octet-stream"}
+MIME_TYPES = MEDIA_TYPES | DOCUMENT_TYPES
+
+
+def asset_kind(mime):
+    top = mime.split("/")[0]
+    return top if top in ("image", "video", "audio") else "file"
 
 
 def storage_dir():
@@ -29,6 +43,14 @@ def valid_signature(mime, data):
         return data.startswith(b"RIFF") and data[8:12] == b"WEBP"
     if mime in {"image/heic", "image/heif", "image/avif"}:
         return data[4:8] == b"ftyp" and data[8:12] in {b"heic", b"heix", b"mif1", b"avif", b"avis"}
+    if mime.startswith("audio/"):
+        # m4a/aac/mp4 audio use the ftyp box; others match common container magic.
+        if data[4:8] == b"ftyp":
+            return True
+        return data.startswith((b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf1", b"RIFF", b"OggS", b"\x1a\x45\xdf\xa3"))
+    if mime in DOCUMENT_TYPES:
+        # Prototype accepts documents as opaque bytes; production should sniff per type.
+        return True
     return data[4:8] == b"ftyp" and data[8:12] in {b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"qt  "}
 
 
@@ -77,7 +99,7 @@ def register_media(app, get_db, actor, can_view_post):
                     target.write(chunk)
             if not size or not valid_signature(mime, signature):
                 raise HTTPException(415, "The file does not match the selected media format")
-            asset = MediaAsset(id=asset_id, owner_id=user.id, mime_type=mime, kind=mime.split("/")[0], size=size)
+            asset = MediaAsset(id=asset_id, owner_id=user.id, mime_type=mime, kind=asset_kind(mime), size=size)
             db.add(asset)
             db.commit()
             committed = True
@@ -95,6 +117,9 @@ def register_media(app, get_db, actor, can_view_post):
         if not allowed and db.scalar(select(AgentAvatar.user_id).where(AgentAvatar.asset_id == asset_id)):
             blocked = db.scalar(select(Block.id).where(or_((Block.owner_id == user.id) & (Block.target_id == asset.owner_id), (Block.owner_id == asset.owner_id) & (Block.target_id == user.id))))
             allowed = not blocked
+        if not allowed:
+            # A direct-message attachment is visible to its sender and recipient.
+            allowed = db.scalar(select(Message.id).where(Message.media_id == asset_id, or_(Message.sender_id == user.id, Message.recipient_id == user.id))) is not None
         if not allowed:
             posts = db.scalars(select(Post).join(PostAsset, PostAsset.post_id == Post.id).where(PostAsset.asset_id == asset_id))
             allowed = any(can_view_post(db, p, user) for p in posts)

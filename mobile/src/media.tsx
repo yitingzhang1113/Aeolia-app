@@ -21,9 +21,11 @@ import { colors as c } from "./theme";
 export function VideoPreview({
   uri,
   cover,
+  flush,
 }: {
   uri: string;
   cover?: string | null;
+  flush?: boolean;
 }) {
   const player = useVideoPlayer(mediaSource(uri), (p) => {
     p.loop = false;
@@ -34,7 +36,7 @@ export function VideoPreview({
   });
   const [started, setStarted] = useState(false);
   return (
-    <View style={s.video}>
+    <View style={[s.video, flush && { marginTop: 0 }]}>
       <VideoView
         player={player}
         style={StyleSheet.absoluteFill}
@@ -88,8 +90,7 @@ export function MediaCarousel({
   const [active, setActive] = useState(0);
   const [width, setWidth] = useState(0);
   if (!items.length) return null;
-  if (items[0].kind === "video")
-    return <VideoPreview uri={items[0].url} cover={cover} />;
+  const slide = width || 300;
   return (
     <View
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
@@ -104,20 +105,30 @@ export function MediaCarousel({
             setActive(Math.round(e.nativeEvent.contentOffset.x / width));
         }}
       >
-        {items.map((item, i) => (
-          <Image
-            key={item.id}
-            source={mediaSource(item.url)}
-            accessibilityLabel={`Photo ${i + 1} of ${items.length}`}
-            resizeMode="contain"
-            style={{
-              width: width || 300,
-              height: width || 300,
-              backgroundColor: c.soft,
-              borderRadius: 12,
-            }}
-          />
-        ))}
+        {items.map((item, i) =>
+          item.kind === "video" ? (
+            <View key={item.id} style={{ width: slide }}>
+              <VideoPreview
+                uri={item.url}
+                cover={i === 0 ? cover : null}
+                flush
+              />
+            </View>
+          ) : (
+            <Image
+              key={item.id}
+              source={mediaSource(item.url)}
+              accessibilityLabel={`Photo ${i + 1} of ${items.length}`}
+              resizeMode="contain"
+              style={{
+                width: slide,
+                height: slide,
+                backgroundColor: c.soft,
+                borderRadius: 12,
+              }}
+            />
+          ),
+        )}
       </ScrollView>
       {items.length > 1 && (
         <View style={s.pagination}>
@@ -136,14 +147,29 @@ export function MediaCarousel({
   );
 }
 
+// Single binary upload to /media, used by chat attachments and voice messages.
+export async function uploadMedia(uri: string, mime: string): Promise<Media> {
+  const result = await FileSystem.uploadAsync(mediaUploadURL, uri, {
+    httpMethod: "POST",
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+    headers: { "Content-Type": mime, "X-User-Id": "1" },
+  });
+  if (result.status >= 400) {
+    let detail = "Upload failed";
+    try {
+      detail = JSON.parse(result.body).detail || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return JSON.parse(result.body);
+}
+
 type Picked = ImagePicker.ImagePickerAsset;
 export function MediaComposer({
-  kind,
   circle,
   onBack,
   onCreated,
 }: {
-  kind: "post" | "video";
   circle: Circle | null;
   onBack: () => void;
   onCreated: () => void;
@@ -167,8 +193,10 @@ export function MediaComposer({
   const requestId = useRef(
     `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const isVideo = kind === "video";
+  const isClip = (a?: Picked) => a?.type === "video";
   const selected = assets[active];
+  // A cover frame is only offered for a single-video post (Instagram-style).
+  const singleVideo = assets.length === 1 && isClip(assets[0]);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -196,32 +224,29 @@ export function MediaComposer({
     setPicking(true);
     setError("");
     try {
-      if (isVideo) {
-        const permission =
-          await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-          Alert.alert(
-            "Photo access needed",
-            "Allow access to choose a video.",
-            [
-              { text: "Cancel", style: "cancel" },
-              { text: "Open Settings", onPress: () => Linking.openSettings() },
-            ],
-          );
-          return;
-        }
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo access needed",
+          "Allow access to choose photos and videos.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ],
+        );
+        return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: isVideo ? ["videos"] : ["images"],
-        allowsMultipleSelection: !isVideo,
+        mediaTypes: ["images", "videos"],
+        allowsMultipleSelection: true,
         selectionLimit: 10,
         orderedSelection: true,
-        allowsEditing: isVideo,
         videoMaxDuration: 60,
         quality: 0.9,
       });
       if (result.canceled) return;
-      const next = result.assets.slice(0, isVideo ? 1 : 10);
+      const next = result.assets.slice(0, 10);
       if (next.some((a) => (a.fileSize || 0) > 64 * 1024 * 1024))
         throw new Error(
           "Choose files smaller than 64 MB each. Try a shorter video.",
@@ -230,7 +255,8 @@ export function MediaComposer({
       setActive(0);
       setFrames([]);
       setCover("");
-      if (isVideo) {
+      // Only a lone video gets a cover picker; mixed carousels use the clip itself.
+      if (next.length === 1 && next[0].type === "video") {
         const duration = next[0].duration || 1000;
         const thumbnails = await Promise.all(
           [0, 0.25, 0.5, 0.75, 0.95].map((f) =>
@@ -332,7 +358,7 @@ export function MediaComposer({
               ? "image/heic"
               : extension === "mov"
                 ? "video/quicktime"
-                : isVideo
+                : isClip(a)
                   ? "video/mp4"
                   : "image/jpeg";
         media.push(await upload(a.uri, a.mimeType || fallback, i, total));
@@ -361,7 +387,7 @@ export function MediaComposer({
   return (
     <>
       <Header
-        title={isVideo ? "New video" : "New post"}
+        title="New post"
         onBack={() => (busy ? undefined : step === 2 ? setStep(1) : close())}
         right={
           <Pressable
@@ -395,21 +421,22 @@ export function MediaComposer({
       >
         {selected && step === 1 ? (
           <>
-            {isVideo ? (
+            {isClip(selected) ? (
               <VideoPreview key={selected.uri} uri={selected.uri} />
             ) : (
               <Image
                 source={{ uri: selected.uri }}
                 resizeMode="contain"
-                accessibilityLabel={`Selected photo ${active + 1}`}
+                accessibilityLabel={`Selected item ${active + 1}`}
                 style={s.preview}
               />
             )}
             <View style={s.selectionInfo}>
               <Text style={styles.muted}>
-                {isVideo
-                  ? `${Math.round((selected.duration || 0) / 1000)} sec`
-                  : `${active + 1} / ${assets.length} selected`}
+                {`${active + 1} / ${assets.length} selected`}
+                {isClip(selected)
+                  ? ` · ${Math.round((selected.duration || 0) / 1000)} sec`
+                  : ""}
               </Text>
               <Text style={styles.muted}>
                 {(
@@ -424,21 +451,14 @@ export function MediaComposer({
         ) : step === 1 ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={isVideo ? "Choose video" : "Choose photos"}
+            accessibilityLabel="Choose photos and videos"
             onPress={pick}
             style={s.emptyPicker}
           >
-            <Icon
-              name={isVideo ? "videocam-outline" : "images-outline"}
-              size={46}
-            />
-            <Text style={styles.heading}>
-              {isVideo ? "Choose a video" : "Choose your moments"}
-            </Text>
+            <Icon name="images-outline" size={46} />
+            <Text style={styles.heading}>Choose your moments</Text>
             <Text style={styles.muted}>
-              {isVideo
-                ? "Select a clip and trim it in the iOS editor."
-                : "Select up to 10 photos, in the order you want."}
+              Select up to 10 photos and videos, in the order you want.
             </Text>
           </Pressable>
         ) : null}
@@ -454,18 +474,15 @@ export function MediaComposer({
                 <Text style={styles.heading}>Photo library</Text>
                 <Icon name="chevron-down" size={16} />
               </Pressable>
-              <Icon
-                name={isVideo ? "film-outline" : "copy-outline"}
-                size={20}
-              />
+              <Icon name="copy-outline" size={20} />
             </View>
-            {!isVideo && assets.length > 0 && (
+            {assets.length > 0 && (
               <>
                 <View style={s.photoGrid}>
                   {assets.map((a, i) => (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={`Select photo ${i + 1}`}
+                      accessibilityLabel={`Select item ${i + 1}`}
                       accessibilityState={{ selected: active === i }}
                       key={a.uri}
                       onPress={() => setActive(i)}
@@ -478,6 +495,11 @@ export function MediaComposer({
                         source={{ uri: a.uri }}
                         style={StyleSheet.absoluteFill}
                       />
+                      {isClip(a) && (
+                        <View style={s.clipBadge}>
+                          <Icon name="play" size={12} color={c.white} />
+                        </View>
+                      )}
                       <View style={s.number}>
                         <Text style={{ color: c.white, fontSize: 11 }}>
                           {i + 1}
@@ -501,7 +523,7 @@ export function MediaComposer({
                   />
                   <IconButton
                     name="trash-outline"
-                    label="Remove selected photo"
+                    label="Remove selected item"
                     onPress={() => {
                       setAssets((a) => a.filter((_, i) => i !== active));
                       setActive(Math.max(0, active - 1));
@@ -516,29 +538,23 @@ export function MediaComposer({
                   picking
                     ? "Opening library…"
                     : assets.length
-                      ? isVideo
-                        ? "Choose / trim another video"
-                        : "Change photos"
-                      : isVideo
-                        ? "Select video"
-                        : "Select photos"
+                      ? "Change selection"
+                      : "Select photos or videos"
                 }
-                icon={isVideo ? "videocam-outline" : "images-outline"}
+                icon="images-outline"
                 secondary
                 loading={picking}
                 onPress={pick}
               />
 
-              {!isVideo && (
-                <Button
-                  label="Write a text post instead"
-                  secondary
-                  onPress={() => {
-                    setAssets([]);
-                    setStep(2);
-                  }}
-                />
-              )}
+              <Button
+                label="Write a text post instead"
+                secondary
+                onPress={() => {
+                  setAssets([]);
+                  setStep(2);
+                }}
+              />
             </View>
           </>
         ) : (
@@ -552,13 +568,15 @@ export function MediaComposer({
                   onPress={() => setStep(1)}
                 >
                   <View style={s.shareThumbnail}>
-                    {!isVideo || cover ? (
+                    {isClip(selected) && !cover ? (
+                      <Icon name="videocam-outline" size={30} />
+                    ) : (
                       <Image
-                        source={{ uri: isVideo ? cover : selected.uri }}
+                        source={{
+                          uri: isClip(selected) ? cover : selected.uri,
+                        }}
                         style={StyleSheet.absoluteFill}
                       />
-                    ) : (
-                      <Icon name="videocam-outline" size={30} />
                     )}
                     {assets.length > 1 && (
                       <View style={s.number}>
@@ -581,7 +599,7 @@ export function MediaComposer({
             <Text style={[styles.muted, { textAlign: "right" }]}>
               {caption.length} / 2,200
             </Text>
-            {isVideo && frames.length > 0 && (
+            {singleVideo && frames.length > 0 && (
               <>
                 <Text style={[styles.heading, { marginTop: 16 }]}>
                   Choose cover
@@ -614,9 +632,9 @@ export function MediaComposer({
                 </ScrollView>
               </>
             )}
-            {!isVideo && assets.length > 1 && (
+            {assets.length > 1 && (
               <Text style={[styles.muted, { marginBottom: 12 }]}>
-                {assets.length} photos · swipe through them after publishing
+                {assets.length} items · swipe through them after publishing
               </Text>
             )}
             <Text style={[styles.heading, { marginVertical: 16 }]}>
@@ -814,6 +832,17 @@ const s = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     backgroundColor: c.teal,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clipBadge: {
+    position: "absolute",
+    left: 4,
+    bottom: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,.5)",
     alignItems: "center",
     justifyContent: "center",
   },

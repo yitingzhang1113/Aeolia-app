@@ -2,6 +2,28 @@
 from sqlalchemy import inspect
 
 
+def add_message_media(engine):
+    """Add messages.media_id for image and voice messages (nullable, additive)."""
+    schema = inspect(engine)
+    if "messages" not in schema.get_table_names():
+        return
+    if any(c["name"] == "media_id" for c in schema.get_columns("messages")):
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE messages ADD COLUMN media_id VARCHAR(32)")
+
+
+def add_message_game_room(engine):
+    """Add messages.game_room_id for game-invite messages (nullable, additive)."""
+    schema = inspect(engine)
+    if "messages" not in schema.get_table_names():
+        return
+    if any(c["name"] == "game_room_id" for c in schema.get_columns("messages")):
+        return
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE messages ADD COLUMN game_room_id INTEGER")
+
+
 def allow_location_encounters(engine):
     schema = inspect(engine)
     if "encounters" not in schema.get_table_names():

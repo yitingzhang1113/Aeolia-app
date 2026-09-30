@@ -139,7 +139,9 @@ class Message(Base):
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     body: Mapped[str] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(String(12), default="text")
+    kind: Mapped[str] = mapped_column(String(16), default="text")
+    media_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id"), nullable=True, default=None)
+    game_room_id: Mapped[int | None] = mapped_column(ForeignKey("game_rooms.id"), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -227,3 +229,26 @@ class PostSubmission(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     request_id: Mapped[str] = mapped_column(String(80))
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id"))
+
+
+class GameRoom(Base):
+    # A play session between connected members. P1 tracks lifecycle only; live
+    # gameplay state (P2+) lives in Redis, not here.
+    __tablename__ = "game_rooms"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))  # "uno" | "draw_guess"
+    host_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    guest_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(16), default="inviting")  # inviting | active | ended
+    winner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class GameParticipant(Base):
+    __tablename__ = "game_participants"
+    __table_args__ = (UniqueConstraint("room_id", "user_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("game_rooms.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

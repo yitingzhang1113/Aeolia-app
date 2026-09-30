@@ -65,7 +65,50 @@ def test_video_cover_and_byte_ranges(client):
     partial = client.get(video['url'], headers={'Range': 'bytes=0-11', 'X-User-Id': '3'})
     assert partial.status_code == 206
     assert len(partial.content) == 12
-    assert client.post('/posts', json={'media_ids': [video['id'], cover['id']]}).status_code == 400
+    # Photos and videos can be mixed in one post (Instagram-style carousel).
+    mixed = client.post('/posts', json={'media_ids': [video['id'], cover['id']], 'visibility': 'friends'})
+    assert mixed.status_code == 200
+    mixed_post = next(p for p in client.get('/feed').json() if p['id'] == mixed.json()['id'])
+    assert [m['kind'] for m in mixed_post['media']] == ['video', 'image']
+
+def test_direct_message_photo_and_voice(client):
+    # Make users 1 and 2 mutual so they can message.
+    assert client.post('/users/2/follow', headers={'X-User-Id': '1'}).status_code == 200
+    assert client.post('/users/1/follow', headers={'X-User-Id': '2'}).status_code == 200
+    # Photo message: kind is inferred from the asset, recipient can view, stranger cannot.
+    photo = upload(client, user=1)
+    sent = client.post('/messages', json={'recipient_id': 2, 'media_id': photo['id']}, headers={'X-User-Id': '1'})
+    assert sent.status_code == 200
+    seen = client.get('/messages/1', headers={'X-User-Id': '2'}).json()[-1]
+    assert seen['kind'] == 'image' and seen['media_url'] == photo['url']
+    assert client.get(photo['url'], headers={'X-User-Id': '2'}).status_code == 200
+    assert client.get(photo['url'], headers={'X-User-Id': '3'}).status_code == 404
+    # Voice message: an m4a upload is stored as audio and inferred as a voice message.
+    clip = upload(client, body=b'\x00\x00\x00\x18ftypM4A ' + b'\x00' * 32, mime='audio/mp4', user=1)
+    assert clip['kind'] == 'audio'
+    voice = client.post('/messages', json={'recipient_id': 2, 'media_id': clip['id']}, headers={'X-User-Id': '1'})
+    assert voice.status_code == 200
+    assert client.get('/messages/1', headers={'X-User-Id': '2'}).json()[-1]['kind'] == 'voice'
+    # You cannot attach another member's upload.
+    theirs = upload(client, user=2)
+    assert client.post('/messages', json={'recipient_id': 2, 'media_id': theirs['id']}, headers={'X-User-Id': '1'}).status_code == 403
+
+def test_direct_message_file_and_invites(client):
+    assert client.post('/users/2/follow', headers={'X-User-Id': '1'}).status_code == 200
+    assert client.post('/users/1/follow', headers={'X-User-Id': '2'}).status_code == 200
+    # A document is stored as a file asset and sent as a file message.
+    doc = upload(client, body=b'%PDF-1.4 hello', mime='application/pdf', user=1)
+    assert doc['kind'] == 'file'
+    assert client.post('/messages', json={'recipient_id': 2, 'kind': 'file', 'body': 'budget.pdf', 'media_id': doc['id']}, headers={'X-User-Id': '1'}).status_code == 200
+    # Game invites and meeting plans are inline chat messages, not events.
+    assert client.post('/messages', json={'recipient_id': 2, 'kind': 'game', 'body': 'Catan at 8'}, headers={'X-User-Id': '1'}).status_code == 200
+    assert client.post('/messages', json={'recipient_id': 2, 'kind': 'meetup', 'body': 'Coffee Sat 10am'}, headers={'X-User-Id': '1'}).status_code == 200
+    seen = client.get('/messages/1', headers={'X-User-Id': '2'}).json()
+    assert [m['kind'] for m in seen[-3:]] == ['file', 'game', 'meetup']
+    assert seen[-3]['media_url'] == doc['url']
+    assert client.get(doc['url'], headers={'X-User-Id': '2'}).status_code == 200
+    # An invite still needs content.
+    assert client.post('/messages', json={'recipient_id': 2, 'kind': 'game', 'body': '  '}, headers={'X-User-Id': '1'}).status_code == 400
 
 def test_demo_seed_is_repeatable_and_conversations_are_two_way(client):
     def request(method, path, user, data=None):

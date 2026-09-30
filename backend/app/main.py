@@ -3,7 +3,7 @@ import logging
 import os
 import random
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,12 +20,15 @@ from .discovery import discuss_and_assess
 from .location import distance_km
 from .profiles import ProfileIn, save_profile
 from .preferences import DiscoveryPolicyIn, evaluate_candidate, private_policy_view, save_policy
-from .migrations import allow_location_encounters
+from .migrations import add_message_game_room, add_message_media, allow_location_encounters
 from .graph import Graph
 from .media import post_media, register_media
+from .games.router import register_games
+from .games.websocket import register_game_ws
 from .personal_ai import router as personal_ai_router
 from .models import DiscoveryPolicy, MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
 
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # repo-root .env (temporary)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./aeolia.db")
@@ -62,6 +65,8 @@ def graph():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     allow_location_encounters(engine)
+    add_message_media(engine)
+    add_message_game_room(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         if not db.scalar(select(User.id).limit(1)):
@@ -127,8 +132,9 @@ class ToggleIn(BaseModel):
 
 class MessageIn(BaseModel):
     recipient_id: int
-    body: str
+    body: str = ""
     kind: str = "text"
+    media_id: str | None = None
 
 
 class EventIn(BaseModel):
@@ -320,6 +326,8 @@ def can_view_post(db, post, viewer):
 
 
 register_media(app, get_db, actor, can_view_post)
+register_games(app, get_db, actor, mutual, is_blocked, user_view, lambda: datetime.now(timezone.utc))
+register_game_ws(app, lambda: SessionLocal())
 register_avatar(app, get_db, actor)
 
 
@@ -364,8 +372,8 @@ def create_post(data: PostIn, db: Session = Depends(get_db), u: User = Depends(a
     assets = [db.get(MediaAsset, asset_id) for asset_id in data.media_ids]
     if any(not asset or asset.owner_id != u.id for asset in assets):
         raise HTTPException(403, "You can only attach your own uploads")
-    if assets and not (all(a.kind == "image" for a in assets) or (len(assets) == 1 and assets[0].kind == "video")):
-        raise HTTPException(400, "Choose up to 10 photos or one video")
+    if assets and not all(a.kind in ("image", "video") for a in assets):
+        raise HTTPException(400, "Attachments must be photos or videos")
     cover = db.get(MediaAsset, data.cover_media_id) if data.cover_media_id else None
     if data.cover_media_id and (not cover or cover.owner_id != u.id or cover.kind != "image" or not assets or assets[0].kind != "video"):
         raise HTTPException(400, "A video cover must be an image you uploaded")
@@ -403,16 +411,27 @@ def delete_post(post_id: int, db: Session = Depends(get_db), u: User = Depends(a
 def messages(other_id: int, db: Session = Depends(get_db), u: User = Depends(actor)):
     if not mutual(db, u.id, other_id) or is_blocked(db, u.id, other_id):
         raise HTTPException(403, "Mutual follow required")
-    return [{"id": m.id, "sender_id": m.sender_id, "body": m.body, "kind": m.kind} for m in db.scalars(select(Message).where(or_((Message.sender_id == u.id) & (Message.recipient_id == other_id), (Message.sender_id == other_id) & (Message.recipient_id == u.id))).order_by(Message.id))]
+    return [{"id": m.id, "sender_id": m.sender_id, "body": m.body, "kind": m.kind,
+             "media_url": f"/media/{m.media_id}" if m.media_id else None,
+             "game_room_id": m.game_room_id}
+            for m in db.scalars(select(Message).where(or_((Message.sender_id == u.id) & (Message.recipient_id == other_id), (Message.sender_id == other_id) & (Message.recipient_id == u.id))).order_by(Message.id))]
 
 
 @app.post("/messages")
 def send_message(data: MessageIn, db: Session = Depends(get_db), u: User = Depends(actor)):
     if not mutual(db, u.id, data.recipient_id) or is_blocked(db, u.id, data.recipient_id):
         raise HTTPException(403, "Mutual follow required")
-    if data.kind not in ("text", "image", "voice"):
+    if data.kind not in ("text", "image", "voice", "video", "file", "game", "meetup"):
         raise HTTPException(400, "Invalid message kind")
-    m = Message(sender_id=u.id, recipient_id=data.recipient_id, body=data.body, kind=data.kind)
+    if not data.body.strip() and not data.media_id:
+        raise HTTPException(400, "Message cannot be empty")
+    if data.media_id:
+        asset = db.get(MediaAsset, data.media_id)
+        if not asset or asset.owner_id != u.id:
+            raise HTTPException(403, "You can only attach your own uploads")
+        if data.kind == "text":
+            data.kind = {"audio": "voice", "image": "image", "video": "video"}.get(asset.kind, "file")
+    m = Message(sender_id=u.id, recipient_id=data.recipient_id, body=data.body, kind=data.kind, media_id=data.media_id)
     db.add(m)
     db.commit()
     return {"id": m.id}
