@@ -18,10 +18,11 @@ from .avatar import register_avatar
 from .discovery import discuss_and_assess
 from .location import distance_km
 from .profiles import ProfileIn, save_profile
+from .preferences import DiscoveryPolicyIn, evaluate_candidate, private_policy_view, save_policy
 from .migrations import allow_location_encounters
 from .graph import Graph
 from .media import post_media, register_media
-from .models import MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
+from .models import DiscoveryPolicy, MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -195,6 +196,18 @@ def update_me(data: SettingsIn, u: User = Depends(actor), db: Session = Depends(
         finally:
             g.close()
     return me(u, db)
+
+
+@app.get("/me/discovery-policy")
+def get_discovery_policy(db: Session = Depends(get_db), u: User = Depends(actor)):
+    """Private: only the owning member can read these rules."""
+    return private_policy_view(db.get(DiscoveryPolicy, u.id))
+
+
+@app.put("/me/discovery-policy")
+def update_discovery_policy(data: DiscoveryPolicyIn, db: Session = Depends(get_db), u: User = Depends(actor)):
+    policy = save_policy(db, u.id, data)
+    return private_policy_view(policy)
 
 
 @app.put("/me/profile")
@@ -505,6 +518,12 @@ def screen_candidates(pool, circle_id, data, db, u):
         if not other or not other.agent_discoverable or not other.agent_chat_allowed or is_blocked(db, u.id, other.id) or mutual(db, u.id, other.id):
             continue
         preference, profile = db.get(SocialProfile, u.id), db.get(SocialProfile, other.id)
+        # Member-owned hard rules are enforced before any personal-AI/model call.
+        policy = db.get(DiscoveryPolicy, u.id)
+        intent = preference.intent if preference else "friendship"
+        eligible, preference_score = evaluate_candidate(policy, intent, other)
+        if not eligible:
+            continue
         if preference and ((profile.intent if profile else "friendship") != preference.intent
                 or (preference.required_city and other.city != preference.required_city)
                 or (preference.minimum_height_cm and (not profile or profile.height_cm is None or profile.height_cm < preference.minimum_height_cm))):
@@ -517,6 +536,8 @@ def screen_candidates(pool, circle_id, data, db, u):
             continue
         public = public_agent_profile(db, other)
         shared = item["shared"] or []
+        # Strong/soft rules improve ordering without overriding hard eligibility.
+        item["preference_score"] = preference_score
         encounter = Encounter(owner_id=u.id, candidate_id=other.id, circle_id=circle_id, reason="", status="screening",
                               evidence=json.dumps(public["posts"]), path=json.dumps(["circle:"+str(circle_id) if circle_id else "Nearby", "topic:"+shared[0] if shared else "chance", "user:"+str(other.id)]))
         screen_encounter(db, encounter, data.api_key if data else None)
