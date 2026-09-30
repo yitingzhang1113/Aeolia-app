@@ -22,6 +22,7 @@ from .preferences import DiscoveryPolicyIn, evaluate_candidate, private_policy_v
 from .migrations import allow_location_encounters
 from .graph import Graph
 from .media import post_media, register_media
+from .personal_ai import router as personal_ai_router
 from .models import DiscoveryPolicy, MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -94,6 +95,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aeolia API", lifespan=lifespan)
+app.include_router(personal_ai_router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
