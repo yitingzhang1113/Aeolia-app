@@ -13,6 +13,10 @@ services:
       NEO4J_AUTH: neo4j/aeolia_dev_password
     ports: ["7474:7474", "7687:7687"]
     volumes: ["graphdata:/data"]
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
 volumes:
   pgdata:
   graphdata:

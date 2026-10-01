@@ -36,7 +36,8 @@
         {
           "locationWhenInUsePermission": "Use your location to find people nearby on Aeolia."
         }
-      ]
+      ],
+      "expo-audio"
     ]
   }
 }

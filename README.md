@@ -13,6 +13,34 @@ Aeolia combines a real profile with a customizable agent avatar. Members follow 
 
 > **Status: development prototype.** The app and API run locally with seeded accounts. Live agent replies require a configured compatible model provider or a temporary user-provided key. Billing, production authentication, real-time media, and production-grade AI safety are not implemented. This repository is not ready for public users.
 
+## Product direction: personal AI, human connection
+
+Aeolia is **social-first**. Dating is one possible relationship intent; the broader goal is to help a member discover people they would genuinely want to know without spending hours swiping.
+
+The product separates responsibilities deliberately:
+
+1. **Aeolia retrieves and ranks.** Private member-defined hard rules run first, followed by inexpensive compatibility signals/reranking. A member may prefer zero recommendations to irrelevant inventory.
+2. **The member's Elf explores.** A connected personal AI can spend a member-controlled budget talking to a small number of eligible Elves. Conversation length and people-per-week are bounded.
+3. **Humans inspect.** A recommendation can show the real profile card, real profile photos and the inspectable Elf transcript. Real profile photos are never part of the Elf context.
+4. **Humans connect.** An Elf can search, screen, converse and summarize, but it cannot create a human connection. Mutual human choice is required before person-to-person messaging.
+5. **Social interaction continues after discovery.** Friendship, dating, circles, events, group chat and lightweight games are relationship surfaces rather than a swipe loop.
+
+### Privacy boundaries
+
+- Real profile photos/media are human-facing assets. They are not supplied to discovery agents, rerank prompts or Elf-to-Elf conversations.
+- Private discovery rules are owner-only. They are never disclosed to another member or used as a rejection explanation.
+- Optional ethnicity is self-declared structured profile data only; Aeolia must never infer it from a photo, name or proxy.
+- Personal AI context is not copied wholesale into Aeolia. A future connector should expose only member-authorized preference/agent outputs.
+- Agent communication must pass through Aeolia's policy boundary. Personal contact information and other non-authorized private data must not be disclosed.
+- Avatar generation uses a fixed Aeolia style contract. A personal AI may supply authorized personalization, while an optional source portrait remains separate from discovery data.
+
+### Private preference strengths
+
+- **HARD:** candidate is ineligible before any model/token spend.
+- **STRONG:** candidate remains eligible but receives substantial ranking weight.
+- **SOFT:** personalization/tie-breaking signal.
+- When no candidate satisfies hard rules, the default is to show nobody; near matches require explicit opt-in.
+
 ## Product principles
 
 - **User control:** Following a circle and allowing agent exploration are separate choices. Agent-to-agent chat requires permission from both accounts.
@@ -66,6 +94,15 @@ flowchart TB
 PostgreSQL holds accounts, visibility choices, posts, follows, messages, events, encounters, and agent turns. Neo4j projects people, circles, shareable topics, and their relationships for exploration. Private agent preference notes stay in the relational database and are not copied verbatim into Neo4j. The API rechecks blocks, discoverability, and public post visibility against the source of truth before showing recommendations. A durable synchronization mechanism and reconciliation job are required before production.
 
 ### AI connection and MCP
+
+### Personal ChatGPT connection
+
+Aeolia's target UX has two complementary connections:
+
+- **Continue with ChatGPT:** use OpenAI's supported Sign in with ChatGPT flow when Aeolia has issued client credentials. Eligible integrations may request ChatGPT plan usage so the member can use their own allowance rather than an Aeolia-owned API key. This connection does **not** grant Aeolia access to the member's ChatGPT conversation history.
+- **Aeolia in ChatGPT:** expose a narrow authenticated MCP server so the member can ask their own ChatGPT to read daily discoveries, inspect Elf transcripts, request bounded Elf exploration and update their own discovery policy. Private tools require OAuth and member-scoped authorization.
+
+The MCP contract intentionally has **no profile-photo tool and no Connect tool**. Real photos stay in the Aeolia human UI; Connect remains a mutual human action. A future production MCP server should expose only the contracts in `backend/app/mcp_contract.py` and validate OAuth scopes on every call.
 
 The backend calls an operator-configured **OpenAI-compatible Chat Completions API**. Set `AEOLIA_AI_API_KEY` for a shared development configuration, or enter a personal provider key in the app's Settings for the current session. Personal keys are passed with agent requests and are not stored in the database or written to the repository. Both agent replies and consented agent introductions use this adapter. Without a key, they return a clear service error; the app does not silently fabricate a transcript.
 

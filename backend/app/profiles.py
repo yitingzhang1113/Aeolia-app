@@ -21,6 +21,7 @@ class ProfileIn(BaseModel):
     bio: str = Field(default="", max_length=600)
     job: str = Field(default="", max_length=80)
     school: str = Field(default="", max_length=100)
+    ethnicity: str = Field(default="", max_length=80)  # optional, self-declared; never inferred from media
     interests: list[str] = Field(default_factory=list, max_length=12)
     languages: list[str] = Field(default_factory=list, max_length=8)
     lifestyle: list[str] = Field(default_factory=list, max_length=8)
@@ -61,6 +62,6 @@ def save_profile(db, user, data):
     if not details:
         details = ProfileDetails(user_id=user.id)
         db.add(details)
-    details.data = json.dumps(data.model_dump(include={"looking_for", "school", "languages", "lifestyle", "music_artists", "music_genres", "music_url", "prompts"}))
+    details.data = json.dumps(data.model_dump(include={"looking_for", "school", "ethnicity", "languages", "lifestyle", "music_artists", "music_genres", "music_url", "prompts"}))
     db.commit()
     db.expire(user, ["social", "details"])

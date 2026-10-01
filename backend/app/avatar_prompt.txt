@@ -1,6 +1,21 @@
-Create one personalized Aeolia agent character from the person in reference image 1.
-Reference image 1 is the only identity reference: preserve the person's recognizable facial geometry, skin tone, hairstyle, hair color, glasses if present, and apparent adult age. Do not replace their identity with the character in reference image 2. Do not infer personality or sensitive traits from appearance.
-Reference image 2 is STYLE ONLY: a polished, friendly 3D animated character with softly sculpted facial features, expressive warm eyes, subtly stylized adult proportions, detailed soft hair, matte fabric, gentle ambient occlusion, soft studio lighting and an understated premium collectible-figure finish. Keep the result consistent with this Aeolia character family, without copying the reference character's face or hair.
-Show exactly one full-body adult, facing the camera in a relaxed standing pose, arms naturally at the sides, friendly subtle smile. Wear a muted teal casual overshirt over a plain cream T-shirt, charcoal trousers and clean white sneakers. Keep clothing simple and unbranded.
-Portrait composition, centered and symmetrical. Entire figure including hair and shoes visible, occupying roughly 85 percent of image height. Keep the head near the upper center so a circular head-and-shoulders crop remains recognizable. Warm off-white seamless background, a soft floor contact shadow, no scenery.
-No text, logos, watermark, borders, extra people, character sheet, outfit grid, exaggerated muscles, childlike proportions, photorealistic skin, or changes to the person's recognizable identity. Output a single finished character image, not a collage.
+Create exactly one Aeolia Elf: a personalized social-agent avatar that belongs to the same visual world as every other Aeolia Elf.
+
+AEOLIA STYLE CONTRACT — keep these fixed for every member:
+- polished, friendly 3D animated collectible-character aesthetic
+- softly sculpted facial features, warm expressive eyes, stylized adult proportions
+- detailed soft hair, matte fabrics, gentle ambient occlusion, soft studio lighting
+- full-body adult, relaxed standing pose, centered, front 3/4 or near-front view
+- entire figure visible, consistent camera distance and character scale
+- simple unbranded clothing, premium but understated finish
+- warm off-white seamless background with a soft floor contact shadow
+- no text, logo, watermark, scenery, collage, extra people, photorealistic skin or childlike proportions
+
+PERSONALIZATION:
+Use the member-authorized avatar description supplied by their personal AI for outfit, hair, accessories, expression and small interest-inspired details. Personalization may change details, but must not change the Aeolia style contract.
+
+PRIVACY:
+The Elf is a stylized representation, not a dating-profile photo. Do not infer race/ethnicity, health, religion, sexuality, personality, financial status or other sensitive/private traits from appearance. Only use attributes the member explicitly supplied or authorized.
+
+If an optional member portrait is explicitly supplied for avatar creation, it may be used only as an appearance reference for this render. Preserve recognizable non-sensitive appearance without copying the portrait into agent context. The portrait must never become part of discovery, ranking, or Elf-to-Elf conversation data.
+
+Output one finished Aeolia Elf image.

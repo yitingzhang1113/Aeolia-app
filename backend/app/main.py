@@ -3,7 +3,7 @@ import logging
 import os
 import random
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,15 +14,21 @@ from sqlalchemy import create_engine, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .ai import AIUnavailable, configured, respond
+from .auth import router as auth_router
 from .avatar import register_avatar
 from .discovery import discuss_and_assess
 from .location import distance_km
 from .profiles import ProfileIn, save_profile
-from .migrations import allow_location_encounters
+from .preferences import DiscoveryPolicyIn, evaluate_candidate, private_policy_view, save_policy
+from .migrations import add_message_game_room, add_message_media, allow_location_encounters
 from .graph import Graph
 from .media import post_media, register_media
-from .models import MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
+from .games.router import register_games
+from .games.websocket import register_game_ws
+from .personal_ai import router as personal_ai_router
+from .models import DiscoveryPolicy, MatchChoice, UserLocation, SocialProfile, AgentAssessment, AgentTurn, Base, Block, Circle, Encounter, Event, Follow, Membership, Message, Post, User, MediaAsset, PostAsset, PostSubmission
 
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # repo-root .env (temporary)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./aeolia.db")
@@ -59,6 +65,8 @@ def graph():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     allow_location_encounters(engine)
+    add_message_media(engine)
+    add_message_game_room(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         if not db.scalar(select(User.id).limit(1)):
@@ -93,6 +101,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aeolia API", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(personal_ai_router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -122,8 +132,9 @@ class ToggleIn(BaseModel):
 
 class MessageIn(BaseModel):
     recipient_id: int
-    body: str
+    body: str = ""
     kind: str = "text"
+    media_id: str | None = None
 
 
 class EventIn(BaseModel):
@@ -195,6 +206,18 @@ def update_me(data: SettingsIn, u: User = Depends(actor), db: Session = Depends(
         finally:
             g.close()
     return me(u, db)
+
+
+@app.get("/me/discovery-policy")
+def get_discovery_policy(db: Session = Depends(get_db), u: User = Depends(actor)):
+    """Private: only the owning member can read these rules."""
+    return private_policy_view(db.get(DiscoveryPolicy, u.id))
+
+
+@app.put("/me/discovery-policy")
+def update_discovery_policy(data: DiscoveryPolicyIn, db: Session = Depends(get_db), u: User = Depends(actor)):
+    policy = save_policy(db, u.id, data)
+    return private_policy_view(policy)
 
 
 @app.put("/me/profile")
@@ -303,6 +326,8 @@ def can_view_post(db, post, viewer):
 
 
 register_media(app, get_db, actor, can_view_post)
+register_games(app, get_db, actor, mutual, is_blocked, user_view, lambda: datetime.now(timezone.utc))
+register_game_ws(app, lambda: SessionLocal())
 register_avatar(app, get_db, actor)
 
 
@@ -347,8 +372,8 @@ def create_post(data: PostIn, db: Session = Depends(get_db), u: User = Depends(a
     assets = [db.get(MediaAsset, asset_id) for asset_id in data.media_ids]
     if any(not asset or asset.owner_id != u.id for asset in assets):
         raise HTTPException(403, "You can only attach your own uploads")
-    if assets and not (all(a.kind == "image" for a in assets) or (len(assets) == 1 and assets[0].kind == "video")):
-        raise HTTPException(400, "Choose up to 10 photos or one video")
+    if assets and not all(a.kind in ("image", "video") for a in assets):
+        raise HTTPException(400, "Attachments must be photos or videos")
     cover = db.get(MediaAsset, data.cover_media_id) if data.cover_media_id else None
     if data.cover_media_id and (not cover or cover.owner_id != u.id or cover.kind != "image" or not assets or assets[0].kind != "video"):
         raise HTTPException(400, "A video cover must be an image you uploaded")
@@ -386,16 +411,27 @@ def delete_post(post_id: int, db: Session = Depends(get_db), u: User = Depends(a
 def messages(other_id: int, db: Session = Depends(get_db), u: User = Depends(actor)):
     if not mutual(db, u.id, other_id) or is_blocked(db, u.id, other_id):
         raise HTTPException(403, "Mutual follow required")
-    return [{"id": m.id, "sender_id": m.sender_id, "body": m.body, "kind": m.kind} for m in db.scalars(select(Message).where(or_((Message.sender_id == u.id) & (Message.recipient_id == other_id), (Message.sender_id == other_id) & (Message.recipient_id == u.id))).order_by(Message.id))]
+    return [{"id": m.id, "sender_id": m.sender_id, "body": m.body, "kind": m.kind,
+             "media_url": f"/media/{m.media_id}" if m.media_id else None,
+             "game_room_id": m.game_room_id}
+            for m in db.scalars(select(Message).where(or_((Message.sender_id == u.id) & (Message.recipient_id == other_id), (Message.sender_id == other_id) & (Message.recipient_id == u.id))).order_by(Message.id))]
 
 
 @app.post("/messages")
 def send_message(data: MessageIn, db: Session = Depends(get_db), u: User = Depends(actor)):
     if not mutual(db, u.id, data.recipient_id) or is_blocked(db, u.id, data.recipient_id):
         raise HTTPException(403, "Mutual follow required")
-    if data.kind not in ("text", "image", "voice"):
+    if data.kind not in ("text", "image", "voice", "video", "file", "game", "meetup"):
         raise HTTPException(400, "Invalid message kind")
-    m = Message(sender_id=u.id, recipient_id=data.recipient_id, body=data.body, kind=data.kind)
+    if not data.body.strip() and not data.media_id:
+        raise HTTPException(400, "Message cannot be empty")
+    if data.media_id:
+        asset = db.get(MediaAsset, data.media_id)
+        if not asset or asset.owner_id != u.id:
+            raise HTTPException(403, "You can only attach your own uploads")
+        if data.kind == "text":
+            data.kind = {"audio": "voice", "image": "image", "video": "video"}.get(asset.kind, "file")
+    m = Message(sender_id=u.id, recipient_id=data.recipient_id, body=data.body, kind=data.kind, media_id=data.media_id)
     db.add(m)
     db.commit()
     return {"id": m.id}
@@ -432,8 +468,16 @@ def screen_encounter(db, encounter, key=None):
     if encounter.id is not None and db.get(AgentAssessment, encounter.id):
         return
     try:
-        turns, decision = discuss_and_assess(public_agent_profile(db, a), public_agent_profile(db, b),
-                                            db.get(Circle, encounter.circle_id).name if encounter.circle_id else "Nearby people", respond, key, a.preference_note)
+        policy = db.get(DiscoveryPolicy, a.id)
+        turns, decision = discuss_and_assess(
+            public_agent_profile(db, a),
+            public_agent_profile(db, b),
+            db.get(Circle, encounter.circle_id).name if encounter.circle_id else "Nearby people",
+            respond,
+            key,
+            a.preference_note,
+            policy.max_turns_per_person if policy else 8,
+        )
     except AIUnavailable as error:
         raise HTTPException(503, str(error)) from error
     # Recheck consent after model calls, before storing a recommendation.
@@ -505,6 +549,12 @@ def screen_candidates(pool, circle_id, data, db, u):
         if not other or not other.agent_discoverable or not other.agent_chat_allowed or is_blocked(db, u.id, other.id) or mutual(db, u.id, other.id):
             continue
         preference, profile = db.get(SocialProfile, u.id), db.get(SocialProfile, other.id)
+        # Member-owned hard rules are enforced before any personal-AI/model call.
+        policy = db.get(DiscoveryPolicy, u.id)
+        intent = preference.intent if preference else "friendship"
+        eligible, preference_score = evaluate_candidate(policy, intent, other)
+        if not eligible:
+            continue
         if preference and ((profile.intent if profile else "friendship") != preference.intent
                 or (preference.required_city and other.city != preference.required_city)
                 or (preference.minimum_height_cm and (not profile or profile.height_cm is None or profile.height_cm < preference.minimum_height_cm))):
@@ -517,6 +567,8 @@ def screen_candidates(pool, circle_id, data, db, u):
             continue
         public = public_agent_profile(db, other)
         shared = item["shared"] or []
+        # Strong/soft rules improve ordering without overriding hard eligibility.
+        item["preference_score"] = preference_score
         encounter = Encounter(owner_id=u.id, candidate_id=other.id, circle_id=circle_id, reason="", status="screening",
                               evidence=json.dumps(public["posts"]), path=json.dumps(["circle:"+str(circle_id) if circle_id else "Nearby", "topic:"+shared[0] if shared else "chance", "user:"+str(other.id)]))
         screen_encounter(db, encounter, data.api_key if data else None)

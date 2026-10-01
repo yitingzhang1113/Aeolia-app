@@ -29,6 +29,28 @@ class User(Base):
     avatar: Mapped["AgentAvatar | None"] = relationship(uselist=False)
 
 
+class ExternalIdentity(Base):
+    """Verified sign-in identity. Provider tokens are never stored in this table."""
+    __tablename__ = "external_identities"
+    __table_args__ = (UniqueConstraint("provider", "issuer", "subject"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(20))
+    issuer: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class AgentAvatar(Base):
     __tablename__ = "agent_avatars"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
@@ -58,6 +80,19 @@ class SocialProfile(Base):
     # Private hard constraints, never sent to the other member's agent.
     minimum_height_cm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     required_city: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class DiscoveryPolicy(Base):
+    """Private member-owned discovery rules. Never expose this object to another member or agent."""
+    __tablename__ = "discovery_policies"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # JSON document keyed by relationship intent (friendship/dating).
+    rules: Mapped[str] = mapped_column(Text, default="{}")
+    # Personal-AI exploration budget. These are ceilings, not entitlements.
+    people_per_week: Mapped[int] = mapped_column(Integer, default=5)
+    max_turns_per_person: Mapped[int] = mapped_column(Integer, default=8)
+    max_tokens_per_person: Mapped[int] = mapped_column(Integer, default=2500)
+    show_near_matches: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class UserLocation(Base):
@@ -104,7 +139,9 @@ class Message(Base):
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     body: Mapped[str] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(String(12), default="text")
+    kind: Mapped[str] = mapped_column(String(16), default="text")
+    media_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id"), nullable=True, default=None)
+    game_room_id: Mapped[int | None] = mapped_column(ForeignKey("game_rooms.id"), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -192,3 +229,26 @@ class PostSubmission(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     request_id: Mapped[str] = mapped_column(String(80))
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id"))
+
+
+class GameRoom(Base):
+    # A play session between connected members. P1 tracks lifecycle only; live
+    # gameplay state (P2+) lives in Redis, not here.
+    __tablename__ = "game_rooms"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))  # "uno" | "draw_guess"
+    host_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    guest_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(16), default="inviting")  # inviting | active | ended
+    winner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class GameParticipant(Base):
+    __tablename__ = "game_participants"
+    __table_args__ = (UniqueConstraint("room_id", "user_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("game_rooms.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
